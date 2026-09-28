@@ -269,55 +269,68 @@ function chooseFemaleVoice(){
       || voices.find(v=>v.lang.toLowerCase().startsWith("en-in"))
       || null;
 }
+let localTTS=null, localTTSPromise=null;
+
+function browserSpeak(text){
+  return new Promise(resolve=>{
+    if(!("speechSynthesis" in window)){resolve();return}
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang="en-IN"; u.rate=.92; u.pitch=1.05;
+    const voice=chooseFemaleVoice(); if(voice) u.voice=voice;
+    u.onend=()=>resolve(); u.onerror=()=>resolve();
+    speechSynthesis.speak(u);
+  });
+}
+
+async function loadLocalTTS(){
+  if(localTTS)return localTTS;
+  if(localTTSPromise)return localTTSPromise;
+  localTTSPromise=(async()=>{
+    status.textContent="Loading Janu's free natural voice (first time only)...";
+    const mod=await import("https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm");
+    localTTS=await mod.KokoroTTS.from_pretrained(
+      "onnx-community/Kokoro-82M-v1.0-ONNX",
+      {dtype:"q8",device:"wasm"}
+    );
+    return localTTS;
+  })();
+  try{return await localTTSPromise}
+  catch(err){localTTSPromise=null; throw err}
+}
+
 async function speak(text){
   speaking=true;
   try{
-    // iPhone Safari can wait indefinitely if the remote neural TTS service is
-    // waking up. Never block the conversation on that network request.
-    const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort(),7000);
-    let r;
-    try{
-      r=await fetch("/speak",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({text}),
-        signal:controller.signal
-      });
-    }finally{clearTimeout(timeout);}
-    if(!r.ok)throw new Error("Neural voice unavailable");
-    const blob=await r.blob();
+    // Fully local, free neural TTS. No paid API and no remote TTS server.
+    const tts=await Promise.race([
+      loadLocalTTS(),
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error("TTS model loading timeout")),15000))
+    ]);
+    const audio=await Promise.race([
+      tts.generate(text,{voice:"af_nicole",speed:0.95}),
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error("TTS generation timeout")),10000))
+    ]);
+    const blob=audio.toBlob();
     const url=URL.createObjectURL(blob);
-    const audio=new Audio(url);
-    audio.volume=1;
+    const player=new Audio(url);
+    player.volume=1;
     try{
-      await audio.play();
-      await new Promise((resolve,reject)=>{
-        const timer=setTimeout(resolve,12000);
-        audio.onended=()=>{clearTimeout(timer);resolve()};
-        audio.onerror=()=>{clearTimeout(timer);reject(new Error("Audio playback failed"))};
+      await player.play();
+      await new Promise(resolve=>{
+        const timer=setTimeout(resolve,15000);
+        player.onended=()=>{clearTimeout(timer);resolve()};
+        player.onerror=()=>{clearTimeout(timer);resolve()};
       });
+    }finally{
       URL.revokeObjectURL(url);
-      speaking=false;
-      return;
-    }catch(err){
-      URL.revokeObjectURL(url);
-      throw err;
     }
   }catch(err){
-    // Always fall back quickly to iPhone's built-in speech instead of leaving
-    // Janu stuck on "greeting" or "speaking".
-    if(!("speechSynthesis" in window)){speaking=false;return}
-    await new Promise(resolve=>{
-      speechSynthesis.cancel();
-      const u=new SpeechSynthesisUtterance(text);
-      u.lang="en-IN"; u.rate=.92; u.pitch=1.05;
-      const voice=chooseFemaleVoice(); if(voice) u.voice=voice;
-      u.onend=()=>resolve(); u.onerror=()=>resolve();
-      speechSynthesis.speak(u);
-    });
+    // Guaranteed fallback so conversation never gets stuck.
+    await browserSpeak(text);
+  }finally{
+    speaking=false;
   }
-  speaking=false;
 }
 async function askJanu(text){
   const r=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -330,7 +343,10 @@ async function startConversation(){
   status.textContent="Janu is greeting you...";
   const greeting="Hi Lakshmanan, I am Janu. How can I help you?";
   addMessage("Janu",greeting,"assistant");
-  await speak(greeting);
+  // Never wait for neural TTS before opening the microphone.
+  const voiceWarmup=loadLocalTTS().catch(()=>null);
+  await browserSpeak(greeting);
+  await voiceWarmup;
   if(!active)return;
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
