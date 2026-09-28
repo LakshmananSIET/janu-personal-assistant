@@ -6,7 +6,7 @@ import os
 import uuid
 from contextlib import suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -16,7 +16,7 @@ from .task_parser import parse_task
 from .task_store import get_due_reminders, list_tasks, mark_reminder_sent, save_task, update_task_status
 from .push_store import list_subscriptions, remove_subscription, save_subscription
 
-app = FastAPI(title="Janu Personal Assistant", version="0.6.0")
+app = FastAPI(title="Janu Personal Assistant", version="0.8.0")
 
 
 class ChatRequest(BaseModel):
@@ -223,6 +223,7 @@ const stopButton=document.getElementById("stopButton");
 const status=document.getElementById("status");
 const conversation=document.getElementById("conversation");
 let recognition=null, active=false, speaking=false;
+let recorder=null, mediaStream=null, silenceTimer=null, recordStartedAt=0;
 let sessionId=localStorage.getItem("janu_session_id");
 if(!sessionId){sessionId=crypto.randomUUID();localStorage.setItem("janu_session_id",sessionId);}
 
@@ -257,26 +258,121 @@ async function askJanu(text){
   return r.json();
 }
 function startConversation(){
-  const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!Recognition){status.textContent="Speech recognition is not supported in this browser.";return}
   active=true; voiceButton.disabled=true; stopButton.disabled=false;
-  recognition=new Recognition(); recognition.lang="en-IN"; recognition.interimResults=false; recognition.continuous=false;
-  recognition.onstart=()=>status.textContent="Listening...";
-  recognition.onresult=async e=>{
-    const text=e.results[0][0].transcript; addMessage("You",text,"user"); status.textContent="Janu is thinking...";
-    try{
-      const result=await askJanu(text); addMessage("Janu",result.reply,"assistant");
-      status.textContent="Janu is speaking..."; await speak(result.reply);
-      if(active)setTimeout(startListening,250);
-    }catch(err){status.textContent="Could not contact Janu.";if(active)setTimeout(startListening,1000)}
-  };
-  recognition.onerror=e=>{if(!active)return;if(e.error==="no-speech"||e.error==="aborted")setTimeout(startListening,300);else setTimeout(startListening,1000)};
-  recognition.onend=()=>{if(active&&!speaking)setTimeout(startListening,250)};
-  startListening();
+  const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(Recognition){
+    recognition=new Recognition(); recognition.lang="en-IN"; recognition.interimResults=false; recognition.continuous=false;
+    recognition.onstart=()=>status.textContent="Listening...";
+    recognition.onresult=async e=>{
+      const text=e.results[0][0].transcript; await handleUserText(text);
+    };
+    recognition.onerror=e=>{
+      if(!active)return;
+      if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+        status.textContent="Microphone/speech permission was blocked. Please allow microphone access.";
+        return;
+      }
+      if(e.error==="no-speech"||e.error==="aborted")setTimeout(startListening,300);
+      else setTimeout(startListening,1000);
+    };
+    recognition.onend=()=>{if(active&&!speaking)setTimeout(startListening,250)};
+    startListening();
+  } else {
+    startRecorder();
+  }
 }
-function startListening(){if(!active||speaking||!recognition)return;try{recognition.start()}catch(e){setTimeout(startListening,500)}}
+async function handleUserText(text){
+  if(!text)return;
+  addMessage("You",text,"user"); status.textContent="Janu is thinking...";
+  try{
+    const result=await askJanu(text); addMessage("Janu",result.reply,"assistant");
+    status.textContent="Janu is speaking..."; await speak(result.reply);
+    if(active){
+      if(recognition)setTimeout(startListening,250);
+      else setTimeout(startRecorder,250);
+    }
+  }catch(err){
+    status.textContent="Could not contact Janu.";
+    if(active)setTimeout(()=>recognition?startListening():startRecorder(),1000);
+  }
+}
+function startListening(){
+  if(!active||speaking||!recognition)return;
+  try{recognition.start()}catch(e){setTimeout(startListening,500)}
+}
+async function startRecorder(){
+  if(!active||speaking)return;
+  try{
+    if(!navigator.mediaDevices?.getUserMedia)throw new Error("Microphone is not available");
+    if(!mediaStream)mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const options={};
+    if(MediaRecorder.isTypeSupported("audio/mp4"))options.mimeType="audio/mp4";
+    else if(MediaRecorder.isTypeSupported("audio/webm;codecs=opus"))options.mimeType="audio/webm;codecs=opus";
+    else if(MediaRecorder.isTypeSupported("audio/webm"))options.mimeType="audio/webm";
+    recorder=new MediaRecorder(mediaStream,options);
+    const chunks=[];
+    recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+    recorder.onstart=()=>{
+      recordStartedAt=Date.now();
+      status.textContent="Listening...";
+      startSilenceDetection();
+    };
+    recorder.onstop=async()=>{
+      stopSilenceDetection();
+      const blob=new Blob(chunks,{type:recorder.mimeType||"audio/webm"});
+      if(blob.size<1000){if(active)setTimeout(startRecorder,500);return}
+      status.textContent="Transcribing...";
+      try{
+        const form=new FormData();
+        const ext=blob.type.includes("mp4")?"mp4":"webm";
+        form.append("audio",blob,"voice."+ext);
+        const r=await fetch("/transcribe",{method:"POST",body:form});
+        const data=await r.json();
+        if(!data.text)throw new Error(data.error||"No speech detected");
+        await handleUserText(data.text);
+      }catch(err){
+        status.textContent="I couldn't understand that. Please try again.";
+        if(active)setTimeout(startRecorder,700);
+      }
+    };
+    recorder.start();
+  }catch(err){
+    status.textContent="Please allow microphone access and try again.";
+    stopConversation();
+  }
+}
+function startSilenceDetection(){
+  const AudioCtx=window.AudioContext||window.webkitAudioContext;
+  if(!AudioCtx||!mediaStream||!recorder)return;
+  const ctx=new AudioCtx(), source=ctx.createMediaStreamSource(mediaStream), analyser=ctx.createAnalyser();
+  analyser.fftSize=2048; source.connect(analyser);
+  const data=new Uint8Array(analyser.fftSize);
+  let quietSince=0;
+  const check=()=>{
+    if(!recorder||recorder.state!=="recording"){ctx.close();return}
+    analyser.getByteTimeDomainData(data);
+    let sum=0;
+    for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;sum+=v*v}
+    const rms=Math.sqrt(sum/data.length);
+    const quiet=rms<0.018;
+    if(quiet){if(!quietSince)quietSince=Date.now()}else quietSince=0;
+    const elapsed=Date.now()-recordStartedAt;
+    if(elapsed>1200&&quietSince&&Date.now()-quietSince>1200){recorder.stop();ctx.close();return}
+    if(elapsed>12000){recorder.stop();ctx.close();return}
+    silenceTimer=requestAnimationFrame(check);
+  };
+  silenceTimer=requestAnimationFrame(check);
+}
+function stopSilenceDetection(){
+  if(silenceTimer)cancelAnimationFrame(silenceTimer);
+  silenceTimer=null;
+}
 function stopConversation(){
-  active=false; speaking=false; try{recognition&&recognition.stop()}catch(e){}
+  active=false; speaking=false;
+  try{recognition&&recognition.stop()}catch(e){}
+  try{recorder&&recorder.stop()}catch(e){}
+  stopSilenceDetection();
+  if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null}
   speechSynthesis?.cancel(); voiceButton.disabled=false; stopButton.disabled=true; status.textContent="Conversation stopped";
 }
 async function setupNotifications(){if(!(\"serviceWorker\" in navigator)||!(\"PushManager\" in window)||!(\"Notification\" in window))return;try{const reg=await navigator.serviceWorker.register(\"/service-worker.js\");const keyResponse=await fetch(\"/push/public-key\");const data=await keyResponse.json();if(!data.public_key)return;const permission=await Notification.requestPermission();if(permission!==\"granted\")return;let sub=await reg.pushManager.getSubscription();if(!sub){const raw=atob(data.public_key.replace(/-/g,\"+\").replace(/_/g,\"/\")+\"=\".repeat((4-data.public_key.length%4)%4));const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});}await fetch(\"/push/subscribe\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify(sub.toJSON())});}catch(e){}}
@@ -308,6 +404,25 @@ async def home():
 async def health():
     return {"status": "ok", "assistant": "Janu", "version": "0.7.0"}
 
+
+
+@app.post("/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {"text": "", "error": "OPENAI_API_KEY is not configured."}
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        result = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=(audio.filename or "voice.webm", audio.file, audio.content_type or "audio/webm"),
+            language="en",
+        )
+        return {"text": (result.text or "").strip()}
+    except Exception as exc:
+        return {"text": "", "error": str(exc)}
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
