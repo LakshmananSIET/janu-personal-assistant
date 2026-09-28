@@ -6,7 +6,7 @@ from .task_parser import parse_task
 from .task_store import save_task
 from .ai import get_ai_result
 
-app = FastAPI(title="Janu Personal Assistant", version="0.4.0")
+app = FastAPI(title="Janu Personal Assistant", version="0.5.0")
 
 
 class ChatRequest(BaseModel):
@@ -88,8 +88,8 @@ body { margin:0; min-height:100vh; display:grid; place-items:center;
         background:#fff; border-radius:28px; box-shadow:0 12px 40px rgba(0,0,0,.08); }
 h1 { margin:0; font-size:34px; }
 .subtitle { color:#666; margin:8px 0 24px; }
-button { border:0; border-radius:999px; padding:16px 28px; font-size:18px;
-         cursor:pointer; background:#111; color:white; }
+button { border:0; border-radius:999px; padding:14px 20px; margin:4px;
+         font-size:17px; cursor:pointer; background:#111; color:white; }
 button:disabled { opacity:.55; cursor:not-allowed; }
 #status { color:#666; min-height:24px; margin-top:18px; }
 #conversation { margin-top:20px; text-align:left; max-height:300px; overflow-y:auto; }
@@ -102,7 +102,10 @@ button:disabled { opacity:.55; cursor:not-allowed; }
 <main class="card">
 <h1>Janu</h1>
 <div class="subtitle">Hi Lakshman, I'm Janu. How can I help you?</div>
-<button id="voiceButton" onclick="startVoice()">🎙️ Talk to Janu</button>
+<div>
+<button id="voiceButton" onclick="startConversation()">🎙️ Start Conversation</button>
+<button id="stopButton" onclick="stopConversation()" disabled>⏹ Stop</button>
+</div>
 <div id="status">Ready</div>
 <section id="conversation"></section>
 </main>
@@ -149,18 +152,62 @@ async function askJanu(text) {
     return await response.json();
 }
 
-function startVoice() {
+let recognition = null;
+let conversationActive = false;
+let speaking = false;
+
+function addMessage(who,text,cssClass) {
+    const div=document.createElement("div");
+    div.className="msg "+cssClass;
+    const label=document.createElement("div");
+    label.className="label";
+    label.textContent=who;
+    const body=document.createElement("div");
+    body.textContent=text;
+    div.append(label,body);
+    conversation.appendChild(div);
+    conversation.scrollTop=conversation.scrollHeight;
+}
+
+function speak(text) {
+    return new Promise(resolve => {
+        if (!("speechSynthesis" in window)) return resolve();
+        speaking=true;
+        window.speechSynthesis.cancel();
+        const u=new SpeechSynthesisUtterance(text);
+        u.lang="en-IN";
+        u.rate=.95;
+        u.pitch=1.05;
+        u.onend=()=>{ speaking=false; resolve(); };
+        u.onerror=()=>{ speaking=false; resolve(); };
+        window.speechSynthesis.speak(u);
+    });
+}
+
+async function askJanu(text) {
+    const response=await fetch("/chat",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({message:text})
+    });
+    if(!response.ok) throw new Error("Backend error");
+    return await response.json();
+}
+
+function startConversation() {
     const Recognition=window.SpeechRecognition || window.webkitSpeechRecognition;
     if(!Recognition) {
         status.textContent="Speech recognition is not supported here.";
         return;
     }
 
-    const recognition=new Recognition();
+    conversationActive=true;
+    button.disabled=true;
+    document.getElementById("stopButton").disabled=false;
+    recognition=new Recognition();
     recognition.lang="en-IN";
     recognition.interimResults=false;
     recognition.continuous=false;
-    button.disabled=true;
 
     recognition.onstart=()=>status.textContent="Listening...";
 
@@ -174,31 +221,47 @@ function startVoice() {
             addMessage("Janu",result.reply,"assistant");
             status.textContent="Janu is speaking...";
             await speak(result.reply);
-            status.textContent=result.task_created
-                ? "Task saved ✓"
-                : "Ready";
+            if(conversationActive) setTimeout(startListening,250);
         } catch(error) {
             status.textContent="Could not contact Janu.";
-        } finally {
-            button.disabled=false;
+            if(conversationActive) setTimeout(startListening,1000);
         }
     };
 
     recognition.onerror=event=>{
-        status.textContent="Voice error: "+event.error;
-        button.disabled=false;
-    };
-
-    recognition.onend=()=>{
-        if(button.disabled && status.textContent==="Listening...") {
-            button.disabled=false;
-            status.textContent="Ready";
+        if(!conversationActive) return;
+        if(event.error==="no-speech" || event.error==="aborted") {
+            setTimeout(startListening,300);
+        } else {
+            status.textContent="Voice error: "+event.error;
+            setTimeout(startListening,1000);
         }
     };
 
-    recognition.start();
+    recognition.onend=()=>{
+        if(conversationActive && !speaking) setTimeout(startListening,250);
+    };
+
+    startListening();
 }
-</script>
+
+function startListening() {
+    if(!conversationActive || speaking || !recognition) return;
+    try { recognition.start(); }
+    catch(error) { setTimeout(startListening,500); }
+}
+
+function stopConversation() {
+    conversationActive=false;
+    speaking=false;
+    if(recognition) {
+        try { recognition.stop(); } catch(error) {}
+    }
+    window.speechSynthesis?.cancel();
+    button.disabled=false;
+    document.getElementById("stopButton").disabled=true;
+    status.textContent="Conversation stopped";
+}</script>
 </body>
 </html>
 """
@@ -210,7 +273,7 @@ async def home():
 
 @app.get("/health")
 async def health():
-    return {"status":"ok","assistant":"Janu","version":"0.4.0"}
+    return {"status":"ok","assistant":"Janu","version":"0.5.0"}
 
 
 @app.post("/chat", response_model=ChatResponse)
