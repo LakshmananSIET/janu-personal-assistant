@@ -1,22 +1,29 @@
+from __future__ import annotations
+
+import uuid
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from .task_parser import parse_task
-from .task_store import save_task
 from .ai import get_ai_result
+from .conversation import add_message, get_history, clear_session
+from .task_parser import parse_task
+from .task_store import list_tasks, save_task, update_task_status
 
-app = FastAPI(title="Janu Personal Assistant", version="0.5.0")
+app = FastAPI(title="Janu Personal Assistant", version="0.6.0")
 
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):
     reply: str
     task_created: bool = False
     task_id: int | None = None
+    session_id: str
 
 
 def format_task_confirmation(task: dict, task_id: int) -> str:
@@ -29,10 +36,28 @@ def format_task_confirmation(task: dict, task_id: int) -> str:
     return " ".join(parts)
 
 
-def janu_reply(message: str) -> ChatResponse:
-    ai_result = get_ai_result(message)
+def format_tasks(tasks: list[dict]) -> str:
+    if not tasks:
+        return "You don't have any pending tasks right now."
+    lines = ["Here are your pending tasks:"]
+    for item in tasks:
+        detail = f"{item['id']}. {item['task']}"
+        if item.get("due_date"):
+            detail += f" — {item['due_date']}"
+        if item.get("deadline"):
+            detail += f" by {item['deadline']}"
+        lines.append(detail)
+    return " ".join(lines)
+
+
+def janu_reply(message: str, session_id: str) -> ChatResponse:
+    history = get_history(session_id)
+    ai_result = get_ai_result(message, history)
+
     if ai_result:
-        if ai_result.get("is_task") and ai_result.get("task"):
+        intent = ai_result.get("intent", "chat")
+
+        if intent == "create_task" and ai_result.get("task"):
             task = {
                 "task": ai_result["task"],
                 "due_date": ai_result.get("due_date"),
@@ -41,36 +66,53 @@ def janu_reply(message: str) -> ChatResponse:
                 "source_text": message,
             }
             task_id = save_task(task)
-            return ChatResponse(
-                reply=ai_result["reply"],
-                task_created=True,
-                task_id=task_id,
-            )
-        return ChatResponse(reply=ai_result["reply"])
+            reply = ai_result.get("reply") or format_task_confirmation(task, task_id)
+            add_message(session_id, "user", message)
+            add_message(session_id, "assistant", reply)
+            return ChatResponse(reply=reply, task_created=True, task_id=task_id, session_id=session_id)
 
+        if intent == "list_tasks":
+            reply = format_tasks(list_tasks())
+        elif intent == "complete_task":
+            task_id = ai_result.get("task_id")
+            if task_id and update_task_status(task_id, "completed"):
+                reply = ai_result.get("reply") or f"Done. I've marked task {task_id} as completed."
+            else:
+                reply = "I couldn't identify that task. Please tell me the task number."
+        else:
+            reply = ai_result.get("reply", "I'm listening, Lakshman.")
+
+        add_message(session_id, "user", message)
+        add_message(session_id, "assistant", reply)
+        return ChatResponse(reply=reply, session_id=session_id)
+
+    # Offline fallback when no API key is configured.
     task = parse_task(message)
-
     if task:
         task_id = save_task(task)
-        return ChatResponse(
-            reply=format_task_confirmation(task, task_id),
-            task_created=True,
-            task_id=task_id,
-        )
+        reply = format_task_confirmation(task, task_id)
+    else:
+        text = message.strip()
+        lower = text.lower()
+        if not text:
+            reply = "I'm listening, Lakshman."
+        elif "show" in lower and "task" in lower:
+            reply = format_tasks(list_tasks())
+        elif "thank" in lower:
+            reply = "You're welcome, Lakshman."
+        elif "hello" in lower or lower == "hi":
+            reply = "Hi Lakshman. I'm Janu. How can I help you?"
+        else:
+            reply = f"Okay Lakshman, I heard you say: {text}"
 
-    text = message.strip()
-    lower = text.lower()
-
-    if not text:
-        return ChatResponse(reply="I'm listening, Lakshman.")
-
-    if "hello" in lower or "hi" in lower:
-        return ChatResponse(reply="Hi Lakshman. I'm Janu. How can I help you?")
-
-    if "thank" in lower:
-        return ChatResponse(reply="You're welcome, Lakshman.")
-
-    return ChatResponse(reply=f"Okay Lakshman, I heard you say: {text}")
+    add_message(session_id, "user", message)
+    add_message(session_id, "assistant", reply)
+    return ChatResponse(
+        reply=reply,
+        task_created=bool(task),
+        task_id=task_id if task else None,
+        session_id=session_id,
+    )
 
 
 HTML = """
@@ -79,189 +121,92 @@ HTML = """
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Janu</title>
+<title>Janu — Personal Assistant</title>
 <style>
-* { box-sizing: border-box; }
-body { margin:0; min-height:100vh; display:grid; place-items:center;
-       background:#f5f7fb; font-family:Arial,sans-serif; }
-.card { width:min(92vw,520px); padding:30px 24px; text-align:center;
-        background:#fff; border-radius:28px; box-shadow:0 12px 40px rgba(0,0,0,.08); }
-h1 { margin:0; font-size:34px; }
-.subtitle { color:#666; margin:8px 0 24px; }
-button { border:0; border-radius:999px; padding:14px 20px; margin:4px;
-         font-size:17px; cursor:pointer; background:#111; color:white; }
-button:disabled { opacity:.55; cursor:not-allowed; }
-#status { color:#666; min-height:24px; margin-top:18px; }
-#conversation { margin-top:20px; text-align:left; max-height:300px; overflow-y:auto; }
-.msg { padding:10px 14px; margin:8px 0; border-radius:14px; background:#f0f2f5; }
-.user { background:#e8f0ff; }
-.label { font-size:12px; color:#777; }
+*{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;
+background:linear-gradient(135deg,#f7f8fc,#eef2ff);font-family:Arial,sans-serif}
+.card{width:min(94vw,620px);padding:28px 22px;background:#fff;border-radius:28px;
+box-shadow:0 16px 50px rgba(0,0,0,.09)} h1{text-align:center;margin:0;font-size:36px}
+.subtitle{text-align:center;color:#666;margin:8px 0 20px}.controls{text-align:center}
+button{border:0;border-radius:999px;padding:13px 18px;margin:4px;font-size:16px;
+cursor:pointer;background:#111;color:#fff}button:disabled{opacity:.5}
+#status{text-align:center;color:#666;min-height:24px;margin:15px 0}
+#conversation{max-height:360px;overflow:auto}.msg{padding:11px 14px;margin:8px 0;
+border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.label{font-size:12px;color:#777;margin-bottom:3px}
 </style>
 </head>
 <body>
 <main class="card">
 <h1>Janu</h1>
 <div class="subtitle">Hi Lakshman, I'm Janu. How can I help you?</div>
-<div>
+<div class="controls">
 <button id="voiceButton" onclick="startConversation()">🎙️ Start Conversation</button>
 <button id="stopButton" onclick="stopConversation()" disabled>⏹ Stop</button>
+<button onclick="clearConversation()">🗑 Clear</button>
 </div>
 <div id="status">Ready</div>
 <section id="conversation"></section>
 </main>
-
 <script>
-const button=document.getElementById("voiceButton");
+const voiceButton=document.getElementById("voiceButton");
+const stopButton=document.getElementById("stopButton");
 const status=document.getElementById("status");
 const conversation=document.getElementById("conversation");
+let recognition=null, active=false, speaking=false;
+let sessionId=localStorage.getItem("janu_session_id");
+if(!sessionId){sessionId=crypto.randomUUID();localStorage.setItem("janu_session_id",sessionId);}
 
-function addMessage(who,text,cssClass) {
-    const div=document.createElement("div");
-    div.className="msg "+cssClass;
-    const label=document.createElement("div");
-    label.className="label";
-    label.textContent=who;
-    const body=document.createElement("div");
-    body.textContent=text;
-    div.append(label,body);
-    conversation.appendChild(div);
-    conversation.scrollTop=conversation.scrollHeight;
+function addMessage(who,text,cls){
+  const div=document.createElement("div"); div.className="msg "+cls;
+  const label=document.createElement("div"); label.className="label"; label.textContent=who;
+  const body=document.createElement("div"); body.textContent=text;
+  div.append(label,body); conversation.appendChild(div); conversation.scrollTop=conversation.scrollHeight;
 }
-
-function speak(text) {
-    return new Promise(resolve => {
-        if (!("speechSynthesis" in window)) return resolve();
-        window.speechSynthesis.cancel();
-        const u=new SpeechSynthesisUtterance(text);
-        u.lang="en-IN";
-        u.rate=.95;
-        u.pitch=1.05;
-        u.onend=resolve;
-        u.onerror=resolve;
-        window.speechSynthesis.speak(u);
-    });
+function speak(text){
+  return new Promise(resolve=>{
+    if(!("speechSynthesis" in window)) return resolve();
+    speaking=true; speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text); u.lang="en-IN"; u.rate=.95; u.pitch=1.05;
+    u.onend=()=>{speaking=false;resolve()}; u.onerror=()=>{speaking=false;resolve()};
+    speechSynthesis.speak(u);
+  });
 }
-
-async function askJanu(text) {
-    const response=await fetch("/chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({message:text})
-    });
-    if(!response.ok) throw new Error("Backend error");
-    return await response.json();
+async function askJanu(text){
+  const r=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({message:text,session_id:sessionId})});
+  if(!r.ok) throw new Error("Backend error");
+  return r.json();
 }
-
-let recognition = null;
-let conversationActive = false;
-let speaking = false;
-
-function addMessage(who,text,cssClass) {
-    const div=document.createElement("div");
-    div.className="msg "+cssClass;
-    const label=document.createElement("div");
-    label.className="label";
-    label.textContent=who;
-    const body=document.createElement("div");
-    body.textContent=text;
-    div.append(label,body);
-    conversation.appendChild(div);
-    conversation.scrollTop=conversation.scrollHeight;
+function startConversation(){
+  const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!Recognition){status.textContent="Speech recognition is not supported in this browser.";return}
+  active=true; voiceButton.disabled=true; stopButton.disabled=false;
+  recognition=new Recognition(); recognition.lang="en-IN"; recognition.interimResults=false; recognition.continuous=false;
+  recognition.onstart=()=>status.textContent="Listening...";
+  recognition.onresult=async e=>{
+    const text=e.results[0][0].transcript; addMessage("You",text,"user"); status.textContent="Janu is thinking...";
+    try{
+      const result=await askJanu(text); addMessage("Janu",result.reply,"assistant");
+      status.textContent="Janu is speaking..."; await speak(result.reply);
+      if(active)setTimeout(startListening,250);
+    }catch(err){status.textContent="Could not contact Janu.";if(active)setTimeout(startListening,1000)}
+  };
+  recognition.onerror=e=>{if(!active)return;if(e.error==="no-speech"||e.error==="aborted")setTimeout(startListening,300);else setTimeout(startListening,1000)};
+  recognition.onend=()=>{if(active&&!speaking)setTimeout(startListening,250)};
+  startListening();
 }
-
-function speak(text) {
-    return new Promise(resolve => {
-        if (!("speechSynthesis" in window)) return resolve();
-        speaking=true;
-        window.speechSynthesis.cancel();
-        const u=new SpeechSynthesisUtterance(text);
-        u.lang="en-IN";
-        u.rate=.95;
-        u.pitch=1.05;
-        u.onend=()=>{ speaking=false; resolve(); };
-        u.onerror=()=>{ speaking=false; resolve(); };
-        window.speechSynthesis.speak(u);
-    });
+function startListening(){if(!active||speaking||!recognition)return;try{recognition.start()}catch(e){setTimeout(startListening,500)}}
+function stopConversation(){
+  active=false; speaking=false; try{recognition&&recognition.stop()}catch(e){}
+  speechSynthesis?.cancel(); voiceButton.disabled=false; stopButton.disabled=true; status.textContent="Conversation stopped";
 }
-
-async function askJanu(text) {
-    const response=await fetch("/chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({message:text})
-    });
-    if(!response.ok) throw new Error("Backend error");
-    return await response.json();
+async function clearConversation(){
+  stopConversation(); conversation.innerHTML="";
+  sessionId=crypto.randomUUID(); localStorage.setItem("janu_session_id",sessionId);
+  try{await fetch("/session/"+sessionId,{method:"DELETE"})}catch(e){}
+  status.textContent="New conversation ready";
 }
-
-function startConversation() {
-    const Recognition=window.SpeechRecognition || window.webkitSpeechRecognition;
-    if(!Recognition) {
-        status.textContent="Speech recognition is not supported here.";
-        return;
-    }
-
-    conversationActive=true;
-    button.disabled=true;
-    document.getElementById("stopButton").disabled=false;
-    recognition=new Recognition();
-    recognition.lang="en-IN";
-    recognition.interimResults=false;
-    recognition.continuous=false;
-
-    recognition.onstart=()=>status.textContent="Listening...";
-
-    recognition.onresult=async event=>{
-        const text=event.results[0][0].transcript;
-        addMessage("You",text,"user");
-        status.textContent="Janu is thinking...";
-
-        try {
-            const result=await askJanu(text);
-            addMessage("Janu",result.reply,"assistant");
-            status.textContent="Janu is speaking...";
-            await speak(result.reply);
-            if(conversationActive) setTimeout(startListening,250);
-        } catch(error) {
-            status.textContent="Could not contact Janu.";
-            if(conversationActive) setTimeout(startListening,1000);
-        }
-    };
-
-    recognition.onerror=event=>{
-        if(!conversationActive) return;
-        if(event.error==="no-speech" || event.error==="aborted") {
-            setTimeout(startListening,300);
-        } else {
-            status.textContent="Voice error: "+event.error;
-            setTimeout(startListening,1000);
-        }
-    };
-
-    recognition.onend=()=>{
-        if(conversationActive && !speaking) setTimeout(startListening,250);
-    };
-
-    startListening();
-}
-
-function startListening() {
-    if(!conversationActive || speaking || !recognition) return;
-    try { recognition.start(); }
-    catch(error) { setTimeout(startListening,500); }
-}
-
-function stopConversation() {
-    conversationActive=false;
-    speaking=false;
-    if(recognition) {
-        try { recognition.stop(); } catch(error) {}
-    }
-    window.speechSynthesis?.cancel();
-    button.disabled=false;
-    document.getElementById("stopButton").disabled=true;
-    status.textContent="Conversation stopped";
-}</script>
+</script>
 </body>
 </html>
 """
@@ -273,9 +218,16 @@ async def home():
 
 @app.get("/health")
 async def health():
-    return {"status":"ok","assistant":"Janu","version":"0.5.0"}
+    return {"status": "ok", "assistant": "Janu", "version": "0.6.0"}
 
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    return janu_reply(request.message)
+    session_id = request.session_id or str(uuid.uuid4())
+    return janu_reply(request.message, session_id)
+
+
+@app.delete("/session/{session_id}")
+async def delete_session(session_id: str):
+    clear_session(session_id)
+    return {"status": "ok"}
