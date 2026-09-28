@@ -36,6 +36,10 @@ TASK_SCHEMA = {
 
 
 def get_ai_result(message: str, history: list[dict[str, str]] | None = None) -> dict | None:
+    # Free trial mode: do not call the paid OpenAI API unless explicitly enabled.
+    if os.getenv("JANU_FREE_MODE", "true").lower() in {"1", "true", "yes", "on"}:
+        return None
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
