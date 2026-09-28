@@ -52,7 +52,10 @@ def format_tasks(tasks: list[dict]) -> str:
 
 def janu_reply(message: str, session_id: str) -> ChatResponse:
     history = get_history(session_id)
-    ai_result = get_ai_result(message, history)
+    try:
+        ai_result = get_ai_result(message, history)
+    except Exception:
+        ai_result = None
 
     if ai_result:
         intent = ai_result.get("intent", "chat")
@@ -162,11 +165,20 @@ function addMessage(who,text,cls){
   const body=document.createElement("div"); body.textContent=text;
   div.append(label,body); conversation.appendChild(div); conversation.scrollTop=conversation.scrollHeight;
 }
+function chooseFemaleVoice(){
+  const voices=speechSynthesis.getVoices();
+  const preferred=["female","samantha","zira","heera","google uk english female","microsoft heera"];
+  return voices.find(v=>v.lang.toLowerCase().startsWith("en-in") && preferred.some(x=>v.name.toLowerCase().includes(x)))
+      || voices.find(v=>preferred.some(x=>v.name.toLowerCase().includes(x)))
+      || voices.find(v=>v.lang.toLowerCase().startsWith("en-in"))
+      || null;
+}
 function speak(text){
   return new Promise(resolve=>{
     if(!("speechSynthesis" in window)) return resolve();
     speaking=true; speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(text); u.lang="en-IN"; u.rate=.95; u.pitch=1.05;
+    const voice=chooseFemaleVoice(); if(voice) u.voice=voice;
     u.onend=()=>{speaking=false;resolve()}; u.onerror=()=>{speaking=false;resolve()};
     speechSynthesis.speak(u);
   });
@@ -202,8 +214,9 @@ function stopConversation(){
 }
 async function clearConversation(){
   stopConversation(); conversation.innerHTML="";
+  const oldSession=sessionId;
   sessionId=crypto.randomUUID(); localStorage.setItem("janu_session_id",sessionId);
-  try{await fetch("/session/"+sessionId,{method:"DELETE"})}catch(e){}
+  try{await fetch("/session/"+oldSession,{method:"DELETE"})}catch(e){}
   status.textContent="New conversation ready";
 }
 </script>
