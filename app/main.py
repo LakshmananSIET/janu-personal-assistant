@@ -263,8 +263,13 @@ async function askJanu(text){
   if(!r.ok) throw new Error("Backend error");
   return r.json();
 }
-function startConversation(){
+async function startConversation(){
   active=true; voiceButton.disabled=true; stopButton.disabled=false;
+  status.textContent="Janu is greeting you...";
+  const greeting="Hi Lakshmanan, I am Janu. How can I help you?";
+  addMessage("Janu",greeting,"assistant");
+  await speak(greeting);
+  if(!active)return;
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
   if(Recognition){
