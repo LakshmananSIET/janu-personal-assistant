@@ -267,7 +267,7 @@ function startConversation(){
   active=true; voiceButton.disabled=true; stopButton.disabled=false;
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  if(Recognition && !isIOS){
+  if(Recognition){
     recognition=new Recognition(); recognition.lang="en-IN"; recognition.interimResults=false; recognition.continuous=false;
     recognition.onstart=()=>{status.textContent="Listening...";liveTranscript.innerHTML="<strong>You:</strong> Listening...";};
     recognition.onresult=async e=>{
@@ -307,7 +307,7 @@ function startListening(){
   if(!active||speaking||!recognition)return;
   try{recognition.start()}catch(e){setTimeout(startListening,500)}
 }
-async async function getLocalTranscriber(){
+async function getLocalTranscriber(){
   if(localTranscriber)return localTranscriber;
   if(localTranscriberPromise)return localTranscriberPromise;
   localTranscriberPromise=(async()=>{
@@ -359,7 +359,7 @@ async function transcribeLocally(blob){
   return (result.text||"").trim();
 }
 
-function startRecorder(){
+async function startRecorder(){
   if(!active||speaking)return;
   try{
     if(!navigator.mediaDevices?.getUserMedia)throw new Error("Microphone is not available");
