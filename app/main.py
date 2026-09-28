@@ -235,6 +235,7 @@ border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.assistant{backgr
 <div class="controls">
 <button id="voiceButton" onclick="startConversation()">🎙️ Start Conversation</button>
 <button id="stopButton" onclick="stopConversation()" disabled>⏹ Stop</button>
+<button id="notifyButton" onclick="enableReminders()">🔔 Enable Reminders</button>
 <button onclick="clearConversation()">🗑 Clear</button>
 </div>
 <div id="status">Ready</div>
