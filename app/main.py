@@ -272,21 +272,41 @@ function chooseFemaleVoice(){
 async function speak(text){
   speaking=true;
   try{
-    const r=await fetch("/speak",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+    // iPhone Safari can wait indefinitely if the remote neural TTS service is
+    // waking up. Never block the conversation on that network request.
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),7000);
+    let r;
+    try{
+      r=await fetch("/speak",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({text}),
+        signal:controller.signal
+      });
+    }finally{clearTimeout(timeout);}
     if(!r.ok)throw new Error("Neural voice unavailable");
     const blob=await r.blob();
     const url=URL.createObjectURL(blob);
     const audio=new Audio(url);
     audio.volume=1;
-    await audio.play();
-    await new Promise(resolve=>{
-      audio.onended=resolve;
-      audio.onerror=resolve;
-    });
-    URL.revokeObjectURL(url);
-    speaking=false;
-    return;
+    try{
+      await audio.play();
+      await new Promise((resolve,reject)=>{
+        const timer=setTimeout(resolve,12000);
+        audio.onended=()=>{clearTimeout(timer);resolve()};
+        audio.onerror=()=>{clearTimeout(timer);reject(new Error("Audio playback failed"))};
+      });
+      URL.revokeObjectURL(url);
+      speaking=false;
+      return;
+    }catch(err){
+      URL.revokeObjectURL(url);
+      throw err;
+    }
   }catch(err){
+    // Always fall back quickly to iPhone's built-in speech instead of leaving
+    // Janu stuck on "greeting" or "speaking".
     if(!("speechSynthesis" in window)){speaking=false;return}
     await new Promise(resolve=>{
       speechSynthesis.cancel();
