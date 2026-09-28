@@ -348,9 +348,6 @@ async function startConversation(){
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-  // On iPhone, do NOT play audio before SpeechRecognition starts.
-  // iOS Safari currently has a SpeechRecognition regression after audio
-  // playback. Starting recognition first avoids that failure.
   if(Recognition){
     recognition=new Recognition();
     recognition.lang="en-IN";
@@ -370,21 +367,35 @@ async function startConversation(){
         status.textContent="Microphone/speech permission was blocked. Allow microphone access and Siri/Dictation.";
         return;
       }
-      if(e.error==="no-speech"||e.error==="aborted")setTimeout(startListening,300);
-      else setTimeout(startListening,1000);
+      if(e.error==="no-speech"||e.error==="aborted")setTimeout(startListening,1000);
+      else setTimeout(startListening,1500);
     };
-    recognition.onend=()=>{if(active&&!speaking)setTimeout(startListening,250)};
-    startListening();
+    recognition.onend=()=>{
+      if(active&&!speaking)setTimeout(startListening,isIOS?3500:250);
+    };
 
-    // For iPhone, keep the greeting visual. Speak replies only after the
-    // first microphone result, preventing the iOS audio/recognition conflict.
+    // iOS Safari has a WebKit bug where audio playback can break the next
+    // SpeechRecognition session. We therefore use the reliable iPhone
+    // browser voice for speech, then wait before reopening recognition.
     if(isIOS){
-      status.textContent="Listening... Speak now.";
+      await browserSpeak(greeting);
+      if(!active)return;
+      status.textContent="Preparing microphone...";
+      try{
+        const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+        stream.getTracks().forEach(t=>t.stop());
+      }catch(e){
+        status.textContent="Please allow microphone access.";
+        stopConversation();
+        return;
+      }
+      setTimeout(startListening,3500);
     }else{
       const voiceWarmup=loadLocalTTS().catch(()=>null);
       await browserSpeak(greeting);
       if(!active)return;
       voiceWarmup.catch(()=>null);
+      startListening();
     }
     return;
   }
@@ -403,10 +414,16 @@ async function handleUserText(text){
   addMessage("You",text,"user"); status.textContent="Janu is thinking...";
   try{
     const result=await askJanu(text); addMessage("Janu",result.reply,"assistant");
-    status.textContent="Janu is speaking..."; await speak(result.reply);
-    if(active){
-      if(recognition)setTimeout(startListening,250);
-      else setTimeout(startRecorder,250);
+    status.textContent="Janu is speaking...";
+    if(/iPhone|iPad|iPod/i.test(navigator.userAgent)){
+      await browserSpeak(result.reply);
+      if(active)setTimeout(startListening,3500);
+    }else{
+      await speak(result.reply);
+      if(active){
+        if(recognition)setTimeout(startListening,250);
+        else setTimeout(startRecorder,250);
+      }
     }
   }catch(err){
     status.textContent="Could not contact Janu.";
