@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 import uuid
+from contextlib import suppress
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -9,7 +13,8 @@ from pydantic import BaseModel
 from .ai import get_ai_result
 from .conversation import add_message, get_history, clear_session
 from .task_parser import parse_task
-from .task_store import list_tasks, save_task, update_task_status
+from .task_store import get_due_reminders, list_tasks, mark_reminder_sent, save_task, update_task_status
+from .push_store import list_subscriptions, remove_subscription, save_subscription
 
 app = FastAPI(title="Janu Personal Assistant", version="0.6.0")
 
@@ -17,6 +22,11 @@ app = FastAPI(title="Janu Personal Assistant", version="0.6.0")
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
+
+
+class PushSubscription(BaseModel):
+    endpoint: str
+    keys: dict
 
 
 class ChatResponse(BaseModel):
@@ -65,6 +75,7 @@ def janu_reply(message: str, session_id: str) -> ChatResponse:
                 "task": ai_result["task"],
                 "due_date": ai_result.get("due_date"),
                 "deadline": ai_result.get("deadline"),
+                "reminder_at": ai_result.get("reminder_at"),
                 "status": "pending",
                 "source_text": message,
             }
@@ -116,6 +127,62 @@ def janu_reply(message: str, session_id: str) -> ChatResponse:
         task_id=task_id if task else None,
         session_id=session_id,
     )
+
+
+def _vapid_public_key() -> str | None:
+    return os.getenv("VAPID_PUBLIC_KEY")
+
+
+async def reminder_worker():
+    while True:
+        try:
+            from datetime import datetime, timezone
+            from pywebpush import webpush, WebPushException
+            private_key = os.getenv("VAPID_PRIVATE_KEY")
+            if private_key and _vapid_public_key():
+                for _, task in get_due_reminders(datetime.now(timezone.utc)):
+                    payload = json.dumps({"title":"Janu reminder","body":f"Lakshman, remember: {task['task']}","url":f"/?reminder={task['id']}","task_id":task["id"]})
+                    for subscription in list_subscriptions():
+                        try:
+                            webpush(subscription_info=subscription,data=payload,vapid_private_key=private_key,vapid_claims={"sub":os.getenv("VAPID_SUBJECT","mailto:admin@example.com")})
+                        except WebPushException as exc:
+                            if getattr(exc.response,"status_code",None) in (404,410):
+                                remove_subscription(subscription.get("endpoint",""))
+                    mark_reminder_sent(task["id"])
+        except Exception:
+            pass
+        await asyncio.sleep(20)
+
+
+@app.on_event("startup")
+async def startup_event():
+    app.state.reminder_task = asyncio.create_task(reminder_worker())
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    task = getattr(app.state, "reminder_task", None)
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+@app.get("/push/public-key")
+async def push_public_key():
+    return {"public_key": _vapid_public_key()}
+
+
+@app.post("/push/subscribe")
+async def push_subscribe(subscription: PushSubscription):
+    save_subscription(subscription.model_dump())
+    return {"status":"subscribed"}
+
+
+@app.delete("/push/subscribe")
+async def push_unsubscribe(subscription: PushSubscription):
+    remove_subscription(subscription.endpoint)
+    return {"status":"unsubscribed"}
 
 
 HTML = """
@@ -212,6 +279,9 @@ function stopConversation(){
   active=false; speaking=false; try{recognition&&recognition.stop()}catch(e){}
   speechSynthesis?.cancel(); voiceButton.disabled=false; stopButton.disabled=true; status.textContent="Conversation stopped";
 }
+async function setupNotifications(){if(!(\"serviceWorker\" in navigator)||!(\"PushManager\" in window)||!(\"Notification\" in window))return;try{const reg=await navigator.serviceWorker.register(\"/service-worker.js\");const keyResponse=await fetch(\"/push/public-key\");const data=await keyResponse.json();if(!data.public_key)return;const permission=await Notification.requestPermission();if(permission!==\"granted\")return;let sub=await reg.pushManager.getSubscription();if(!sub){const raw=atob(data.public_key.replace(/-/g,\"+\").replace(/_/g,\"/\")+\"=\".repeat((4-data.public_key.length%4)%4));const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});}await fetch(\"/push/subscribe\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify(sub.toJSON())});}catch(e){}}
+setupNotifications();
+navigator.serviceWorker?.addEventListener(\"message\",event=>{if(event.data?.type===\"janu-reminder\"){window.focus();startConversation();}});
 async function clearConversation(){
   stopConversation(); conversation.innerHTML="";
   const oldSession=sessionId;
@@ -224,6 +294,11 @@ async function clearConversation(){
 </html>
 """
 
+@app.get("/service-worker.js", response_class=HTMLResponse)
+async def service_worker():
+    return HTMLResponse(SERVICE_WORKER, media_type="application/javascript")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return HTML
@@ -231,7 +306,7 @@ async def home():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "assistant": "Janu", "version": "0.6.0"}
+    return {"status": "ok", "assistant": "Janu", "version": "0.7.0"}
 
 
 @app.post("/chat", response_model=ChatResponse)
