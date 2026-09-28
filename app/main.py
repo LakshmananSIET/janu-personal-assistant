@@ -270,31 +270,6 @@ function chooseFemaleVoice(){
 }
 async function speak(text){
   speaking=true;
-  const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-  // iPhone/iPad: start the device voice directly from the user interaction.
-  // This avoids Safari blocking audio that arrives after an async network request.
-  if(isIOS && "speechSynthesis" in window){
-    await new Promise(resolve=>{
-      speechSynthesis.cancel();
-      const speakNow=()=>{
-        const u=new SpeechSynthesisUtterance(text);
-        u.lang="en-IN"; u.rate=.92; u.pitch=1.05;
-        const voice=chooseFemaleVoice(); if(voice) u.voice=voice;
-        u.onend=()=>resolve(); u.onerror=()=>resolve();
-        speechSynthesis.speak(u);
-      };
-      const voices=speechSynthesis.getVoices();
-      if(voices.length) speakNow();
-      else {
-        speechSynthesis.onvoiceschanged=()=>{speechSynthesis.onvoiceschanged=null;speakNow()};
-        setTimeout(speakNow,300);
-      }
-    });
-    speaking=false;
-    return;
-  }
-
   try{
     const r=await fetch("/speak",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
     if(!r.ok)throw new Error("Neural voice unavailable");
@@ -539,12 +514,36 @@ class SpeakRequest(BaseModel):
     text: str
 
 
+async def _indic_parler_speak(text: str) -> bytes:
+    """Use the free public AI4Bharat Indic Parler-TTS Space."""
+    from gradio_client import Client
+    client = Client("ai4bharat/indic-parler-tts")
+    description = (
+        "A young Indian female speaker with a very soft, gentle and warm voice, "
+        "medium-high pitch, calm intimate conversational delivery, slightly slow pace, "
+        "subtle emotion, natural pauses and realistic close-microphone sound. "
+        "She speaks clear Indian English naturally. Never deep, never bold, never loud. "
+        "The recording is very high quality with no background noise."
+    )
+    result = client.predict(text, description, api_name="/generate_finetuned")
+    audio_path = result[0] if isinstance(result, (list, tuple)) else result
+    if not audio_path:
+        raise RuntimeError("Indic Parler-TTS returned no audio")
+    with open(audio_path, "rb") as audio_file:
+        return audio_file.read()
+
+
 @app.post("/speak")
 async def speak(request: SpeakRequest):
     text = request.text.strip()
     if not text:
         return Response(content=b"", media_type="audio/mpeg")
     try:
+        backend = os.getenv("JANU_TTS_BACKEND", "indic_parler").lower()
+        if backend == "indic_parler":
+            audio = await asyncio.to_thread(_indic_parler_speak, text)
+            return Response(content=audio, media_type="audio/mpeg")
+
         import edge_tts
         communicate = edge_tts.Communicate(
             text,
@@ -557,7 +556,7 @@ async def speak(request: SpeakRequest):
             if chunk.get("type") == "audio":
                 audio.extend(chunk.get("data", b""))
         return Response(content=bytes(audio), media_type="audio/mpeg")
-    except Exception as exc:
+    except Exception:
         return Response(content=b"", media_type="audio/mpeg", status_code=503)
 
 
