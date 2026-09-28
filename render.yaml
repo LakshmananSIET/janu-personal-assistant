@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: janu-personal-assistant
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: JANU_MODEL
+        value: gpt-5.6-luna
