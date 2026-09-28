@@ -265,7 +265,8 @@ async function askJanu(text){
 function startConversation(){
   active=true; voiceButton.disabled=true; stopButton.disabled=false;
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(Recognition){
+  const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if(Recognition && !isIOS){
     recognition=new Recognition(); recognition.lang="en-IN"; recognition.interimResults=false; recognition.continuous=false;
     recognition.onstart=()=>{status.textContent="Listening...";liveTranscript.innerHTML="<strong>You:</strong> Listening...";};
     recognition.onresult=async e=>{
@@ -338,7 +339,8 @@ async function startRecorder(){
         if(!data.text)throw new Error(data.error||"No speech detected");
         await handleUserText(data.text);
       }catch(err){
-        status.textContent="I couldn't understand that. Please try again.";
+        status.textContent="Voice processing failed. Please try again.";
+        liveTranscript.innerHTML="<strong>System:</strong> "+(err.message||"Voice processing failed");
         if(active)setTimeout(startRecorder,700);
       }
     };
