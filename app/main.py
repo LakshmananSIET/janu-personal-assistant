@@ -7,7 +7,7 @@ import uuid
 from contextlib import suppress
 
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from .ai import get_ai_result
@@ -247,15 +247,35 @@ function chooseFemaleVoice(){
       || voices.find(v=>v.lang.toLowerCase().startsWith("en-in"))
       || null;
 }
-function speak(text){
-  return new Promise(resolve=>{
-    if(!("speechSynthesis" in window)) return resolve();
-    speaking=true; speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(text); u.lang="en-IN"; u.rate=.95; u.pitch=1.05;
-    const voice=chooseFemaleVoice(); if(voice) u.voice=voice;
-    u.onend=()=>{speaking=false;resolve()}; u.onerror=()=>{speaking=false;resolve()};
-    speechSynthesis.speak(u);
-  });
+async function speak(text){
+  speaking=true;
+  try{
+    const r=await fetch("/speak",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
+    if(!r.ok)throw new Error("Neural voice unavailable");
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const audio=new Audio(url);
+    audio.volume=1;
+    await audio.play();
+    await new Promise(resolve=>{
+      audio.onended=resolve;
+      audio.onerror=resolve;
+    });
+    URL.revokeObjectURL(url);
+    speaking=false;
+    return;
+  }catch(err){
+    if(!("speechSynthesis" in window)){speaking=false;return}
+    await new Promise(resolve=>{
+      speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance(text);
+      u.lang="en-IN"; u.rate=.92; u.pitch=1.05;
+      const voice=chooseFemaleVoice(); if(voice) u.voice=voice;
+      u.onend=()=>resolve(); u.onerror=()=>resolve();
+      speechSynthesis.speak(u);
+    });
+  }
+  speaking=false;
 }
 async function askJanu(text){
   const r=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -467,6 +487,32 @@ async def home():
 async def health():
     return {"status": "ok", "assistant": "Janu", "version": "0.9.0", "free_mode": os.getenv("JANU_FREE_MODE", "true").lower() in {"1","true","yes","on"}}
 
+
+
+class SpeakRequest(BaseModel):
+    text: str
+
+
+@app.post("/speak")
+async def speak(request: SpeakRequest):
+    text = request.text.strip()
+    if not text:
+        return Response(content=b"", media_type="audio/mpeg")
+    try:
+        import edge_tts
+        communicate = edge_tts.Communicate(
+            text,
+            voice=os.getenv("JANU_TTS_VOICE", "en-IN-AartiNeural"),
+            rate=os.getenv("JANU_TTS_RATE", "-5%"),
+            pitch=os.getenv("JANU_TTS_PITCH", "+2Hz"),
+        )
+        audio = bytearray()
+        async for chunk in communicate.stream():
+            if chunk.get("type") == "audio":
+                audio.extend(chunk.get("data", b""))
+        return Response(content=bytes(audio), media_type="audio/mpeg")
+    except Exception as exc:
+        return Response(content=b"", media_type="audio/mpeg", status_code=503)
 
 
 @app.post("/transcribe")
