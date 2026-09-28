@@ -9,3 +9,9 @@ services:
         sync: false
       - key: JANU_MODEL
         value: gpt-5.6-luna
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
