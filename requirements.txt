@@ -5,3 +5,4 @@ openpyxl
 openai
 pywebpush
 edge-tts
+gradio_client
