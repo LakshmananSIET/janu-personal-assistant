@@ -339,30 +339,35 @@ async function askJanu(text){
   return r.json();
 }
 async function startConversation(){
+  if(active)return;
   active=true; voiceButton.disabled=true; stopButton.disabled=false;
   status.textContent="Janu is greeting you...";
   const greeting="Hi Lakshmanan, I am Janu. How can I help you?";
   addMessage("Janu",greeting,"assistant");
-  // Never wait for neural TTS before opening the microphone.
-  const voiceWarmup=loadLocalTTS().catch(()=>null);
-  await browserSpeak(greeting);
-  if(!active)return;
-  // Warm the local neural model in the background; never block microphone startup.
-  voiceWarmup.catch(()=>null);
+
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  // iOS Safari can break SpeechRecognition after audio playback. Use the
-  // microphone recorder + local Whisper path on iPhone instead.
-  if(Recognition && !isIOS){
-    recognition=new Recognition(); recognition.lang="en-IN"; recognition.interimResults=false; recognition.continuous=false;
-    recognition.onstart=()=>{status.textContent="Listening...";liveTranscript.innerHTML="<strong>You:</strong> Listening...";};
+
+  // On iPhone, do NOT play audio before SpeechRecognition starts.
+  // iOS Safari currently has a SpeechRecognition regression after audio
+  // playback. Starting recognition first avoids that failure.
+  if(Recognition){
+    recognition=new Recognition();
+    recognition.lang="en-IN";
+    recognition.interimResults=false;
+    recognition.continuous=false;
+    recognition.onstart=()=>{
+      status.textContent="Listening... Speak now.";
+      liveTranscript.innerHTML="<strong>You:</strong> Listening... Speak now.";
+    };
     recognition.onresult=async e=>{
-      const text=e.results[0][0].transcript; await handleUserText(text);
+      const text=e.results[0][0].transcript;
+      await handleUserText(text);
     };
     recognition.onerror=e=>{
       if(!active)return;
       if(e.error==="not-allowed"||e.error==="service-not-allowed"){
-        status.textContent="Microphone/speech permission was blocked. Please allow microphone access.";
+        status.textContent="Microphone/speech permission was blocked. Allow microphone access and Siri/Dictation.";
         return;
       }
       if(e.error==="no-speech"||e.error==="aborted")setTimeout(startListening,300);
@@ -370,9 +375,28 @@ async function startConversation(){
     };
     recognition.onend=()=>{if(active&&!speaking)setTimeout(startListening,250)};
     startListening();
-  } else {
-    startRecorder();
+
+    // For iPhone, keep the greeting visual. Speak replies only after the
+    // first microphone result, preventing the iOS audio/recognition conflict.
+    if(isIOS){
+      status.textContent="Listening... Speak now.";
+    }else{
+      const voiceWarmup=loadLocalTTS().catch(()=>null);
+      await browserSpeak(greeting);
+      if(!active)return;
+      voiceWarmup.catch(()=>null);
+    }
+    return;
   }
+
+  // Recorder + local Whisper is only a fallback for browsers without
+  // SpeechRecognition. It can exceed iPhone Safari's WASM memory limit.
+  if(isIOS){
+    status.textContent="This iPhone browser cannot access speech recognition. Please use Safari with Siri/Dictation enabled.";
+    stopConversation();
+    return;
+  }
+  startRecorder();
 }
 async function handleUserText(text){
   if(!text)return;
@@ -555,7 +579,6 @@ async function enableReminders(){
   }
 }
 async function setupNotifications(){if(!(\"serviceWorker\" in navigator)||!(\"PushManager\" in window)||!(\"Notification\" in window))return;try{const reg=await navigator.serviceWorker.register(\"/service-worker.js\");const keyResponse=await fetch(\"/push/public-key\");const data=await keyResponse.json();if(!data.public_key)return;const permission=await Notification.requestPermission();if(permission!==\"granted\")return;let sub=await reg.pushManager.getSubscription();if(!sub){const raw=atob(data.public_key.replace(/-/g,\"+\").replace(/_/g,\"/\")+\"=\".repeat((4-data.public_key.length%4)%4));const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});}await fetch(\"/push/subscribe\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify(sub.toJSON())});}catch(e){}}
-setupNotifications();
 navigator.serviceWorker?.addEventListener(\"message\",event=>{if(event.data?.type===\"janu-reminder\"){window.focus();startConversation();}});
 async function clearConversation(){
   stopConversation(); conversation.innerHTML="";
