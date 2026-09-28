@@ -346,11 +346,14 @@ async function startConversation(){
   // Never wait for neural TTS before opening the microphone.
   const voiceWarmup=loadLocalTTS().catch(()=>null);
   await browserSpeak(greeting);
-  await voiceWarmup;
   if(!active)return;
+  // Warm the local neural model in the background; never block microphone startup.
+  voiceWarmup.catch(()=>null);
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  if(Recognition){
+  // iOS Safari can break SpeechRecognition after audio playback. Use the
+  // microphone recorder + local Whisper path on iPhone instead.
+  if(Recognition && !isIOS){
     recognition=new Recognition(); recognition.lang="en-IN"; recognition.interimResults=false; recognition.continuous=false;
     recognition.onstart=()=>{status.textContent="Listening...";liveTranscript.innerHTML="<strong>You:</strong> Listening...";};
     recognition.onresult=async e=>{
@@ -515,6 +518,41 @@ function stopConversation(){
   stopSilenceDetection();
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null}
   speechSynthesis?.cancel(); voiceButton.disabled=false; stopButton.disabled=true; status.textContent="Conversation stopped";
+}
+async function enableReminders(){
+  const button=document.getElementById("notifyButton");
+  try{
+    if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window)){
+      status.textContent="This browser does not support push reminders.";
+      return;
+    }
+    const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const standalone=window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true;
+    if(isIOS && !standalone){
+      status.textContent="On iPhone: Share → Add to Home Screen → open Janu from Home Screen, then Enable Reminders.";
+      return;
+    }
+    const reg=await navigator.serviceWorker.register("/service-worker.js");
+    const keyResponse=await fetch("/push/public-key");
+    const data=await keyResponse.json();
+    if(!data.public_key)throw new Error("Reminder service is not configured.");
+    const permission=await Notification.requestPermission();
+    if(permission!=="granted"){
+      status.textContent="Notifications are blocked. Allow notifications for Janu.";
+      return;
+    }
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub){
+      const raw=atob(data.public_key.replace(/-/g,"+").replace(/_/g,"/")+"=".repeat((4-data.public_key.length%4)%4));
+      const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));
+      sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
+    }
+    await fetch("/push/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sub.toJSON())});
+    button.textContent="🔔 Reminders Enabled";
+    status.textContent="Reminders are enabled.";
+  }catch(e){
+    status.textContent="Could not enable reminders. Please try again.";
+  }
 }
 async function setupNotifications(){if(!(\"serviceWorker\" in navigator)||!(\"PushManager\" in window)||!(\"Notification\" in window))return;try{const reg=await navigator.serviceWorker.register(\"/service-worker.js\");const keyResponse=await fetch(\"/push/public-key\");const data=await keyResponse.json();if(!data.public_key)return;const permission=await Notification.requestPermission();if(permission!==\"granted\")return;let sub=await reg.pushManager.getSubscription();if(!sub){const raw=atob(data.public_key.replace(/-/g,\"+\").replace(/_/g,\"/\")+\"=\".repeat((4-data.public_key.length%4)%4));const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});}await fetch(\"/push/subscribe\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify(sub.toJSON())});}catch(e){}}
 setupNotifications();
