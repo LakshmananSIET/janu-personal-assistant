@@ -16,7 +16,7 @@ from .task_parser import parse_task
 from .task_store import get_due_reminders, list_tasks, mark_reminder_sent, save_task, update_task_status
 from .push_store import list_subscriptions, remove_subscription, save_subscription
 
-app = FastAPI(title="Janu Personal Assistant", version="0.8.0")
+app = FastAPI(title="Janu Personal Assistant", version="0.9.0")
 
 
 class ChatRequest(BaseModel):
@@ -228,6 +228,7 @@ const conversation=document.getElementById("conversation");
 const liveTranscript=document.getElementById("liveTranscript");
 let recognition=null, active=false, speaking=false;
 let recorder=null, mediaStream=null, silenceTimer=null, recordStartedAt=0;
+let localTranscriber=null, localTranscriberPromise=null;
 let sessionId=localStorage.getItem("janu_session_id");
 if(!sessionId){sessionId=crypto.randomUUID();localStorage.setItem("janu_session_id",sessionId);}
 
@@ -306,7 +307,59 @@ function startListening(){
   if(!active||speaking||!recognition)return;
   try{recognition.start()}catch(e){setTimeout(startListening,500)}
 }
-async function startRecorder(){
+async async function getLocalTranscriber(){
+  if(localTranscriber)return localTranscriber;
+  if(localTranscriberPromise)return localTranscriberPromise;
+  localTranscriberPromise=(async()=>{
+    status.textContent="Loading free voice model (first time only)...";
+    const mod=await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1");
+    mod.env.allowRemoteModels=true;
+    mod.env.allowLocalModels=false;
+    mod.env.useBrowserCache=true;
+    localTranscriber=await mod.pipeline(
+      "automatic-speech-recognition",
+      "Xenova/whisper-tiny.en",
+      {device:"wasm"}
+    );
+    return localTranscriber;
+  })();
+  try{return await localTranscriberPromise}
+  catch(err){localTranscriberPromise=null;throw err}
+}
+
+async function blobTo16kMono(blob){
+  const AudioCtx=window.AudioContext||window.webkitAudioContext;
+  if(!AudioCtx)throw new Error("This browser cannot decode recorded audio locally.");
+  const ctx=new AudioCtx();
+  try{
+    const buffer=await ctx.decodeAudioData(await blob.arrayBuffer());
+    const input=buffer.getChannelData(0);
+    const targetRate=16000;
+    const length=Math.max(1,Math.round(input.length*targetRate/buffer.sampleRate));
+    const output=new Float32Array(length);
+    const ratio=buffer.sampleRate/targetRate;
+    for(let i=0;i<length;i++){
+      const pos=i*ratio;
+      const left=Math.floor(pos);
+      const right=Math.min(left+1,input.length-1);
+      const frac=pos-left;
+      output[i]=input[left]*(1-frac)+input[right]*frac;
+    }
+    return output;
+  }finally{
+    try{await ctx.close()}catch(e){}
+  }
+}
+
+async function transcribeLocally(blob){
+  const transcriber=await getLocalTranscriber();
+  const audio=await blobTo16kMono(blob);
+  status.textContent="Running speech recognition on your device...";
+  const result=await transcriber(audio,{chunk_length_s:20,stride_length_s:3});
+  return (result.text||"").trim();
+}
+
+function startRecorder(){
   if(!active||speaking)return;
   try{
     if(!navigator.mediaDevices?.getUserMedia)throw new Error("Microphone is not available");
@@ -328,20 +381,16 @@ async function startRecorder(){
       stopSilenceDetection();
       const blob=new Blob(chunks,{type:recorder.mimeType||"audio/webm"});
       if(blob.size<1000){if(active)setTimeout(startRecorder,500);return}
-      status.textContent="Transcribing...";
-      liveTranscript.innerHTML="<strong>You:</strong> Transcribing your speech...";
+      status.textContent="Transcribing on your device...";
+      liveTranscript.innerHTML="<strong>You:</strong> Loading free on-device speech recognition...";
       try{
-        const form=new FormData();
-        const ext=blob.type.includes("mp4")?"mp4":"webm";
-        form.append("audio",blob,"voice."+ext);
-        const r=await fetch("/transcribe",{method:"POST",body:form});
-        const data=await r.json();
-        if(!data.text)throw new Error(data.error||"No speech detected");
-        await handleUserText(data.text);
+        const text=await transcribeLocally(blob);
+        if(!text)throw new Error("No speech detected");
+        await handleUserText(text);
       }catch(err){
-        status.textContent="Voice processing failed. Please try again.";
-        liveTranscript.innerHTML="<strong>System:</strong> "+(err.message||"Voice processing failed");
-        if(active)setTimeout(startRecorder,700);
+        status.textContent="Free voice transcription failed. Please try again.";
+        liveTranscript.innerHTML="<strong>System:</strong> "+(err.message||"Local voice processing failed");
+        if(active)setTimeout(startRecorder,1200);
       }
     };
     recorder.start();
@@ -411,7 +460,7 @@ async def home():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "assistant": "Janu", "version": "0.7.0"}
+    return {"status": "ok", "assistant": "Janu", "version": "0.9.0", "free_mode": os.getenv("JANU_FREE_MODE", "true").lower() in {"1","true","yes","on"}}
 
 
 
