@@ -4,8 +4,9 @@ from pydantic import BaseModel
 
 from .task_parser import parse_task
 from .task_store import save_task
+from .ai import get_ai_result
 
-app = FastAPI(title="Janu Personal Assistant", version="0.3.0")
+app = FastAPI(title="Janu Personal Assistant", version="0.4.0")
 
 
 class ChatRequest(BaseModel):
@@ -29,6 +30,24 @@ def format_task_confirmation(task: dict, task_id: int) -> str:
 
 
 def janu_reply(message: str) -> ChatResponse:
+    ai_result = get_ai_result(message)
+    if ai_result:
+        if ai_result.get("is_task") and ai_result.get("task"):
+            task = {
+                "task": ai_result["task"],
+                "due_date": ai_result.get("due_date"),
+                "deadline": ai_result.get("deadline"),
+                "status": "pending",
+                "source_text": message,
+            }
+            task_id = save_task(task)
+            return ChatResponse(
+                reply=ai_result["reply"],
+                task_created=True,
+                task_id=task_id,
+            )
+        return ChatResponse(reply=ai_result["reply"])
+
     task = parse_task(message)
 
     if task:
@@ -191,7 +210,7 @@ async def home():
 
 @app.get("/health")
 async def health():
-    return {"status":"ok","assistant":"Janu","version":"0.3.0"}
+    return {"status":"ok","assistant":"Janu","version":"0.4.0"}
 
 
 @app.post("/chat", response_model=ChatResponse)
