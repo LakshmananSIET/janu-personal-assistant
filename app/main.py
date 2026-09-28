@@ -185,6 +185,27 @@ async def push_unsubscribe(subscription: PushSubscription):
     return {"status":"unsubscribed"}
 
 
+SERVICE_WORKER = """
+self.addEventListener("push", event => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) {}
+  event.waitUntil(self.registration.showNotification(
+    data.title || "Janu reminder",
+    {body: data.body || "You have a reminder from Janu.", data:{url:data.url || "/"}}
+  ));
+});
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/";
+  event.waitUntil(clients.matchAll({type:"window", includeUncontrolled:true}).then(list => {
+    for (const client of list) {
+      if ("focus" in client) { client.navigate(url); return client.focus(); }
+    }
+    return clients.openWindow ? clients.openWindow(url) : undefined;
+  }));
+});
+"""
+
 HTML = """
 <!doctype html>
 <html lang="en">
@@ -249,6 +270,31 @@ function chooseFemaleVoice(){
 }
 async function speak(text){
   speaking=true;
+  const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  // iPhone/iPad: start the device voice directly from the user interaction.
+  // This avoids Safari blocking audio that arrives after an async network request.
+  if(isIOS && "speechSynthesis" in window){
+    await new Promise(resolve=>{
+      speechSynthesis.cancel();
+      const speakNow=()=>{
+        const u=new SpeechSynthesisUtterance(text);
+        u.lang="en-IN"; u.rate=.92; u.pitch=1.05;
+        const voice=chooseFemaleVoice(); if(voice) u.voice=voice;
+        u.onend=()=>resolve(); u.onerror=()=>resolve();
+        speechSynthesis.speak(u);
+      };
+      const voices=speechSynthesis.getVoices();
+      if(voices.length) speakNow();
+      else {
+        speechSynthesis.onvoiceschanged=()=>{speechSynthesis.onvoiceschanged=null;speakNow()};
+        setTimeout(speakNow,300);
+      }
+    });
+    speaking=false;
+    return;
+  }
+
   try{
     const r=await fetch("/speak",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
     if(!r.ok)throw new Error("Neural voice unavailable");
