@@ -4,3 +4,4 @@ python-multipart
 openpyxl
 openai
 pywebpush
+edge-tts
