@@ -201,8 +201,10 @@ box-shadow:0 16px 50px rgba(0,0,0,.09)} h1{text-align:center;margin:0;font-size:
 button{border:0;border-radius:999px;padding:13px 18px;margin:4px;font-size:16px;
 cursor:pointer;background:#111;color:#fff}button:disabled{opacity:.5}
 #status{text-align:center;color:#666;min-height:24px;margin:15px 0}
-#conversation{max-height:360px;overflow:auto}.msg{padding:11px 14px;margin:8px 0;
-border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.label{font-size:12px;color:#777;margin-bottom:3px}
+#conversation{max-height:360px;overflow:auto;margin-top:12px;border-top:1px solid #eee;padding-top:8px}.msg{padding:11px 14px;margin:8px 0;
+border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.assistant{background:#f4f4f4}.label{font-size:12px;color:#777;margin-bottom:3px}
+#liveTranscript{margin-top:12px;padding:12px 14px;border-radius:14px;background:#fafafa;border:1px dashed #ccc;color:#555;min-height:46px;text-align:left}
+#liveTranscript strong{color:#222}
 </style>
 </head>
 <body>
@@ -215,6 +217,7 @@ border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.label{font-size:
 <button onclick="clearConversation()">🗑 Clear</button>
 </div>
 <div id="status">Ready</div>
+<div id="liveTranscript"><strong>Live:</strong> Waiting for conversation...</div>
 <section id="conversation"></section>
 </main>
 <script>
@@ -222,12 +225,14 @@ const voiceButton=document.getElementById("voiceButton");
 const stopButton=document.getElementById("stopButton");
 const status=document.getElementById("status");
 const conversation=document.getElementById("conversation");
+const liveTranscript=document.getElementById("liveTranscript");
 let recognition=null, active=false, speaking=false;
 let recorder=null, mediaStream=null, silenceTimer=null, recordStartedAt=0;
 let sessionId=localStorage.getItem("janu_session_id");
 if(!sessionId){sessionId=crypto.randomUUID();localStorage.setItem("janu_session_id",sessionId);}
 
 function addMessage(who,text,cls){
+  liveTranscript.innerHTML="<strong>"+who+":</strong> "+text;
   const div=document.createElement("div"); div.className="msg "+cls;
   const label=document.createElement("div"); label.className="label"; label.textContent=who;
   const body=document.createElement("div"); body.textContent=text;
@@ -262,7 +267,7 @@ function startConversation(){
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(Recognition){
     recognition=new Recognition(); recognition.lang="en-IN"; recognition.interimResults=false; recognition.continuous=false;
-    recognition.onstart=()=>status.textContent="Listening...";
+    recognition.onstart=()=>{status.textContent="Listening...";liveTranscript.innerHTML="<strong>You:</strong> Listening...";};
     recognition.onresult=async e=>{
       const text=e.results[0][0].transcript; await handleUserText(text);
     };
@@ -315,6 +320,7 @@ async function startRecorder(){
     recorder.onstart=()=>{
       recordStartedAt=Date.now();
       status.textContent="Listening...";
+      liveTranscript.innerHTML="<strong>You:</strong> Listening... Speak now.";
       startSilenceDetection();
     };
     recorder.onstop=async()=>{
@@ -322,6 +328,7 @@ async function startRecorder(){
       const blob=new Blob(chunks,{type:recorder.mimeType||"audio/webm"});
       if(blob.size<1000){if(active)setTimeout(startRecorder,500);return}
       status.textContent="Transcribing...";
+      liveTranscript.innerHTML="<strong>You:</strong> Transcribing your speech...";
       try{
         const form=new FormData();
         const ext=blob.type.includes("mp4")?"mp4":"webm";
