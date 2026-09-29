@@ -1,0 +1,10 @@
+{
+  "name": "Jaanu",
+  "short_name": "Jaanu",
+  "id": "/?app=jaanu",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "description": "Jaanu personal AI voice assistant"
+}
