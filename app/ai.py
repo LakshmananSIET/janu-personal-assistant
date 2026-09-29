@@ -22,7 +22,8 @@ IMPORTANT TASK RULE:
 Use ISO 8601 with Asia/Kolkata offset for reminder_at when a time is known.
 The current local time is supplied below; use it to resolve today/tomorrow.
 For task dates use YYYY-MM-DD. For deadlines use HH:MM.
-Do not invent missing dates or times. Return only the requested JSON.
+Do not invent missing dates or times.
+Return only the requested JSON.
 """
 
 TASK_SCHEMA = {
@@ -41,33 +42,101 @@ TASK_SCHEMA = {
 }
 
 
-def get_ai_result(message: str, history: list[dict[str, str]] | None = None) -> dict | None:
-    # Free trial mode: do not call the paid OpenAI API unless explicitly enabled.
-    if os.getenv("JANU_FREE_MODE", "true").lower() in {"1", "true", "yes", "on"}:
+def _fallback_result() -> dict:
+    return {
+        "intent": "chat",
+        "task": None,
+        "due_date": None,
+        "deadline": None,
+        "reminder_at": None,
+        "task_id": None,
+        "reply": "Sorry, I couldn't connect to my free AI service right now. Please try again.",
+    }
+
+
+def _gemini_result(message: str, history: list[dict[str, str]] | None = None) -> dict | None:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        from google import genai
+        from google.genai import types
+
+        now = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")
+        contents = []
+        for item in history or []:
+            role = "model" if item.get("role") == "assistant" else "user"
+            contents.append(
+                types.Content(
+                    role=role,
+                    parts=[types.Part.from_text(text=str(item.get("content", "")))],
+                )
+            )
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=message)],
+            )
+        )
+
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=os.getenv("JANU_AI_MODEL", "gemini-3.7-flash"),
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT + f"\nCurrent Asia/Kolkata time: {now}",
+                response_mime_type="application/json",
+                response_schema=TASK_SCHEMA,
+                temperature=0.7,
+            ),
+        )
+        return json.loads(response.text)
+    except Exception:
+        return None
+
+
+def _openai_result(message: str, history: list[dict[str, str]] | None = None) -> dict | None:
+    # Optional paid OpenAI fallback. Disabled unless JANU_USE_OPENAI=true.
+    if os.getenv("JANU_USE_OPENAI", "false").lower() not in {"1", "true", "yes", "on"}:
         return None
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
 
-    now = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")
-    instructions = SYSTEM_PROMPT + f"\nCurrent Asia/Kolkata time: {now}"
+    try:
+        now = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="seconds")
+        conversation = list(history or [])
+        conversation.append({"role": "user", "content": message})
+        client = OpenAI(api_key=api_key)
+        response = client.responses.create(
+            model=os.getenv("JANU_MODEL", "gpt-5.6-luna"),
+            instructions=SYSTEM_PROMPT + f"\nCurrent Asia/Kolkata time: {now}",
+            input=conversation,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "janu_result",
+                    "strict": True,
+                    "schema": TASK_SCHEMA,
+                }
+            },
+        )
+        return json.loads(response.output_text)
+    except Exception:
+        return None
 
-    client = OpenAI(api_key=api_key)
-    conversation = list(history or [])
-    conversation.append({"role": "user", "content": message})
 
-    response = client.responses.create(
-        model=os.getenv("JANU_MODEL", "gpt-5.6-luna"),
-        instructions=instructions,
-        input=conversation,
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "janu_result",
-                "strict": True,
-                "schema": TASK_SCHEMA,
-            }
-        },
-    )
-    return json.loads(response.output_text)
+def get_ai_result(message: str, history: list[dict[str, str]] | None = None) -> dict | None:
+    # Gemini is the default free AI path. OpenAI is optional and never called
+    # unless JANU_USE_OPENAI is explicitly enabled.
+    result = _gemini_result(message, history)
+    if result is not None:
+        return result
+
+    result = _openai_result(message, history)
+    if result is not None:
+        return result
+
+    return None
