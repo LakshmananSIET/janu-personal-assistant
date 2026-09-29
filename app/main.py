@@ -16,7 +16,7 @@ from .task_parser import parse_task
 from .task_store import get_due_reminders, list_tasks, mark_reminder_sent, save_task, update_task_status
 from .push_store import list_subscriptions, remove_subscription, save_subscription
 
-app = FastAPI(title="Janu Personal Assistant", version="0.9.0")
+app = FastAPI(title="Jaanu Personal Assistant", version="0.9.0")
 
 
 class ChatRequest(BaseModel):
@@ -115,7 +115,7 @@ def janu_reply(message: str, session_id: str) -> ChatResponse:
         elif "thank" in lower:
             reply = "You're welcome, Lakshman."
         elif "hello" in lower or lower == "hi":
-            reply = "Hi Lakshman. I'm Janu. How can I help you?"
+            reply = "Hi Lakshman. I'm Jaanu. How can I help you?"
         else:
             reply = f"Okay Lakshman, I heard you say: {text}"
 
@@ -141,7 +141,7 @@ async def reminder_worker():
             private_key = os.getenv("VAPID_PRIVATE_KEY")
             if private_key and _vapid_public_key():
                 for _, task in get_due_reminders(datetime.now(timezone.utc)):
-                    payload = json.dumps({"title":"Janu reminder","body":f"Lakshman, remember: {task['task']}","url":f"/?reminder={task['id']}","task_id":task["id"]})
+                    payload = json.dumps({"title":"Jaanu reminder","body":f"Lakshman, remember: {task['task']}","url":f"/?reminder={task['id']}","task_id":task["id"]})
                     for subscription in list_subscriptions():
                         try:
                             webpush(subscription_info=subscription,data=payload,vapid_private_key=private_key,vapid_claims={"sub":os.getenv("VAPID_SUBJECT","mailto:admin@example.com")})
@@ -190,8 +190,8 @@ self.addEventListener("push", event => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch (e) {}
   event.waitUntil(self.registration.showNotification(
-    data.title || "Janu reminder",
-    {body: data.body || "You have a reminder from Janu.", data:{url:data.url || "/"}}
+    data.title || "Jaanu reminder",
+    {body: data.body || "You have a reminder from Jaanu.", data:{url:data.url || "/"}}
   ));
 });
 self.addEventListener("notificationclick", event => {
@@ -212,7 +212,10 @@ HTML = """
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Janu — Personal Assistant</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Jaanu">
+<link rel="manifest" href="/manifest.json">
+<title>Jaanu — Personal Assistant</title>
 <style>
 *{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;
 background:linear-gradient(135deg,#f7f8fc,#eef2ff);font-family:Arial,sans-serif}
@@ -230,8 +233,8 @@ border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.assistant{backgr
 </head>
 <body>
 <main class="card">
-<h1>Janu</h1>
-<div class="subtitle">Hi Lakshman, I'm Janu. How can I help you?</div>
+<h1>Jaanu</h1>
+<div class="subtitle">Hi Lakshman, I'm Jaanu. How can I help you?</div>
 <div class="controls">
 <button id="voiceButton" onclick="startConversation()">🎙️ Start Conversation</button>
 <button id="stopButton" onclick="stopConversation()" disabled>⏹ Stop</button>
@@ -287,7 +290,7 @@ async function loadLocalTTS(){
   if(localTTS)return localTTS;
   if(localTTSPromise)return localTTSPromise;
   localTTSPromise=(async()=>{
-    status.textContent="Loading Janu's free natural voice (first time only)...";
+    status.textContent="Loading Jaanu's free natural voice (first time only)...";
     const mod=await import("https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm");
     localTTS=await mod.KokoroTTS.from_pretrained(
       "onnx-community/Kokoro-82M-v1.0-ONNX",
@@ -332,7 +335,7 @@ async function speak(text){
     speaking=false;
   }
 }
-async function askJanu(text){
+async function askJaanu(text){
   const r=await fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({message:text,session_id:sessionId})});
   if(!r.ok) throw new Error("Backend error");
@@ -341,9 +344,9 @@ async function askJanu(text){
 async function startConversation(){
   if(active)return;
   active=true; voiceButton.disabled=true; stopButton.disabled=false;
-  status.textContent="Janu is greeting you...";
-  const greeting="Hi Lakshmanan, I am Janu. How can I help you?";
-  addMessage("Janu",greeting,"assistant");
+  status.textContent="Jaanu is greeting you...";
+  const greeting="Hi Lakshmanan, I am Jaanu. How can I help you?";
+  addMessage("Jaanu",greeting,"assistant");
 
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
   const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -411,10 +414,10 @@ async function startConversation(){
 }
 async function handleUserText(text){
   if(!text)return;
-  addMessage("You",text,"user"); status.textContent="Janu is thinking...";
+  addMessage("You",text,"user"); status.textContent="Jaanu is thinking...";
   try{
-    const result=await askJanu(text); addMessage("Janu",result.reply,"assistant");
-    status.textContent="Janu is speaking...";
+    const result=await askJaanu(text); addMessage("Jaanu",result.reply,"assistant");
+    status.textContent="Jaanu is speaking...";
     if(/iPhone|iPad|iPod/i.test(navigator.userAgent)){
       await browserSpeak(result.reply);
       if(active)setTimeout(startListening,3500);
@@ -426,7 +429,7 @@ async function handleUserText(text){
       }
     }
   }catch(err){
-    status.textContent="Could not contact Janu.";
+    status.textContent="Could not contact Jaanu.";
     if(active)setTimeout(()=>recognition?startListening():startRecorder(),1000);
   }
 }
@@ -563,14 +566,14 @@ function stopConversation(){
 async function enableReminders(){
   const button=document.getElementById("notifyButton");
   try{
-    if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window)){
-      status.textContent="This browser does not support push reminders.";
-      return;
-    }
     const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
     const standalone=window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true;
     if(isIOS && !standalone){
-      status.textContent="On iPhone: Share → Add to Home Screen → open Janu from Home Screen, then Enable Reminders.";
+      status.textContent="To get iPhone reminders, add Jaanu to the Home Screen, open Jaanu from its icon, then tap Enable Reminders.";
+      return;
+    }
+    if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window)){
+      status.textContent="Background reminders are not available in this browser. Use Jaanu as a Home Screen app on iPhone.";
       return;
     }
     const reg=await navigator.serviceWorker.register("/service-worker.js");
@@ -579,7 +582,7 @@ async function enableReminders(){
     if(!data.public_key)throw new Error("Reminder service is not configured.");
     const permission=await Notification.requestPermission();
     if(permission!=="granted"){
-      status.textContent="Notifications are blocked. Allow notifications for Janu.";
+      status.textContent="Notifications are blocked. Allow notifications for Jaanu.";
       return;
     }
     let sub=await reg.pushManager.getSubscription();
@@ -596,7 +599,7 @@ async function enableReminders(){
   }
 }
 async function setupNotifications(){if(!(\"serviceWorker\" in navigator)||!(\"PushManager\" in window)||!(\"Notification\" in window))return;try{const reg=await navigator.serviceWorker.register(\"/service-worker.js\");const keyResponse=await fetch(\"/push/public-key\");const data=await keyResponse.json();if(!data.public_key)return;const permission=await Notification.requestPermission();if(permission!==\"granted\")return;let sub=await reg.pushManager.getSubscription();if(!sub){const raw=atob(data.public_key.replace(/-/g,\"+\").replace(/_/g,\"/\")+\"=\".repeat((4-data.public_key.length%4)%4));const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});}await fetch(\"/push/subscribe\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify(sub.toJSON())});}catch(e){}}
-navigator.serviceWorker?.addEventListener(\"message\",event=>{if(event.data?.type===\"janu-reminder\"){window.focus();startConversation();}});
+navigator.serviceWorker?.addEventListener(\"message\",event=>{if(event.data?.type===\"jaanu-reminder\"){window.focus();startConversation();}});
 async function clearConversation(){
   stopConversation(); conversation.innerHTML="";
   const oldSession=sessionId;
@@ -621,7 +624,7 @@ async def home():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "assistant": "Janu", "version": "0.9.0", "free_mode": os.getenv("JANU_FREE_MODE", "true").lower() in {"1","true","yes","on"}}
+    return {"status": "ok", "assistant": "Jaanu", "version": "0.9.0", "free_mode": os.getenv("JANU_FREE_MODE", "true").lower() in {"1","true","yes","on"}}
 
 
 
