@@ -37,7 +37,10 @@ class ChatResponse(BaseModel):
 
 
 def format_task_confirmation(task: dict, task_id: int) -> str:
-    parts = [f"Okay Lakshman, I've noted: {task['task']}."]
+    if task.get("kind") == "reminder" or task.get("reminder_at"):
+        parts = [f"Okay Lakshman, I'll remind you: {task['task']}."]
+    else:
+        parts = [f"Okay Lakshman, I've added the task: {task['task']}."]
     if task.get("due_date"):
         parts.append(f"Date: {task['due_date']}.")
     if task.get("deadline"):
@@ -70,9 +73,10 @@ def janu_reply(message: str, session_id: str) -> ChatResponse:
     if ai_result:
         intent = ai_result.get("intent", "chat")
 
-        if intent == "create_task" and ai_result.get("task"):
+        if intent in {"create_task", "create_reminder"} and ai_result.get("task"):
             task = {
                 "task": ai_result["task"],
+                "kind": "reminder" if intent == "create_reminder" else "task",
                 "due_date": ai_result.get("due_date"),
                 "deadline": ai_result.get("deadline"),
                 "reminder_at": ai_result.get("reminder_at"),
@@ -116,8 +120,16 @@ def janu_reply(message: str, session_id: str) -> ChatResponse:
             reply = "You're welcome, Lakshman."
         elif "hello" in lower or lower == "hi":
             reply = "Hi Lakshman. I'm Jaanu. How can I help you?"
+        elif lower in {"what time is it", "what is the time", "time"}:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            reply = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("It is %I:%M %p in India.")
+        elif lower in {"what is today", "what date is it", "today"}:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            reply = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("Today is %A, %d %B %Y.")
         else:
-            reply = f"Okay Lakshman, I heard you say: {text}"
+            reply = "I can chat normally, but the free trial does not currently have a general AI knowledge engine enabled. General questions need the AI provider to be connected."
 
     add_message(session_id, "user", message)
     add_message(session_id, "assistant", reply)
@@ -238,7 +250,6 @@ border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.assistant{backgr
 <div class="controls">
 <button id="voiceButton" onclick="startConversation()">🎙️ Start Conversation</button>
 <button id="stopButton" onclick="stopConversation()" disabled>⏹ Stop</button>
-<button id="notifyButton" onclick="enableReminders()">🔔 Enable Reminders</button>
 <button onclick="clearConversation()">🗑 Clear</button>
 </div>
 <div id="status">Ready</div>
@@ -341,8 +352,46 @@ async function askJaanu(text){
   if(!r.ok) throw new Error("Backend error");
   return r.json();
 }
+async function registerPushSubscription(){
+  try{
+    if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window))return false;
+    const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const standalone=window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true;
+    if(isIOS && !standalone)return false;
+    const reg=await navigator.serviceWorker.register("/service-worker.js");
+    const keyResponse=await fetch("/push/public-key");
+    const data=await keyResponse.json();
+    if(!data.public_key)return false;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub){
+      const raw=atob(data.public_key.replace(/-/g,"+").replace(/_/g,"/")+"=".repeat((4-data.public_key.length%4)%4));
+      const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));
+      sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
+    }
+    await fetch("/push/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sub.toJSON())});
+    return true;
+  }catch(e){return false}
+}
+
+function autoEnableRemindersFromGesture(){
+  if(!("Notification" in window))return;
+  const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const standalone=window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true;
+  if(isIOS && !standalone)return;
+  if(Notification.permission==="granted"){
+    registerPushSubscription();
+    return;
+  }
+  if(Notification.permission==="default"){
+    Notification.requestPermission().then(permission=>{
+      if(permission==="granted")registerPushSubscription();
+    }).catch(()=>{});
+  }
+}
+
 async function startConversation(){
   if(active)return;
+  autoEnableRemindersFromGesture();
   active=true; voiceButton.disabled=true; stopButton.disabled=false;
   status.textContent="Jaanu is greeting you...";
   const greeting="Hi Lakshmanan, I am Jaanu. How can I help you?";
@@ -563,42 +612,6 @@ function stopConversation(){
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null}
   speechSynthesis?.cancel(); voiceButton.disabled=false; stopButton.disabled=true; status.textContent="Conversation stopped";
 }
-async function enableReminders(){
-  const button=document.getElementById("notifyButton");
-  try{
-    const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const standalone=window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true;
-    if(isIOS && !standalone){
-      status.textContent="To get iPhone reminders, add Jaanu to the Home Screen, open Jaanu from its icon, then tap Enable Reminders.";
-      return;
-    }
-    if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window)){
-      status.textContent="Background reminders are not available in this browser. Use Jaanu as a Home Screen app on iPhone.";
-      return;
-    }
-    const reg=await navigator.serviceWorker.register("/service-worker.js");
-    const keyResponse=await fetch("/push/public-key");
-    const data=await keyResponse.json();
-    if(!data.public_key)throw new Error("Reminder service is not configured.");
-    const permission=await Notification.requestPermission();
-    if(permission!=="granted"){
-      status.textContent="Notifications are blocked. Allow notifications for Jaanu.";
-      return;
-    }
-    let sub=await reg.pushManager.getSubscription();
-    if(!sub){
-      const raw=atob(data.public_key.replace(/-/g,"+").replace(/_/g,"/")+"=".repeat((4-data.public_key.length%4)%4));
-      const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));
-      sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
-    }
-    await fetch("/push/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sub.toJSON())});
-    button.textContent="🔔 Reminders Enabled";
-    status.textContent="Reminders are enabled.";
-  }catch(e){
-    status.textContent="Could not enable reminders. Please try again.";
-  }
-}
-async function setupNotifications(){if(!(\"serviceWorker\" in navigator)||!(\"PushManager\" in window)||!(\"Notification\" in window))return;try{const reg=await navigator.serviceWorker.register(\"/service-worker.js\");const keyResponse=await fetch(\"/push/public-key\");const data=await keyResponse.json();if(!data.public_key)return;const permission=await Notification.requestPermission();if(permission!==\"granted\")return;let sub=await reg.pushManager.getSubscription();if(!sub){const raw=atob(data.public_key.replace(/-/g,\"+\").replace(/_/g,\"/\")+\"=\".repeat((4-data.public_key.length%4)%4));const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});}await fetch(\"/push/subscribe\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify(sub.toJSON())});}catch(e){}}
 navigator.serviceWorker?.addEventListener(\"message\",event=>{if(event.data?.type===\"jaanu-reminder\"){window.focus();startConversation();}});
 async function clearConversation(){
   stopConversation(); conversation.innerHTML="";
