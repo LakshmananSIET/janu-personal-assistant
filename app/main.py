@@ -243,7 +243,14 @@ h1{font-size:38px;margin:0 0 8px;font-weight:650}
 #voiceButton{border:0;border-radius:999px;padding:16px 30px;font-size:17px;font-weight:600;cursor:pointer;background:#fff;color:#111;box-shadow:0 8px 30px rgba(0,0,0,.25)}
 #voiceButton:disabled{opacity:.5}
 #status{display:none}
-#conversation,#liveTranscript{display:none}
+#conversation{display:flex;flex-direction:column;gap:8px;width:min(620px,100%);max-height:150px;overflow-y:auto;padding:10px 4px;margin-top:4px;text-align:left;scroll-behavior:smooth}
+.msg{padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.35;word-break:break-word}
+.msg.user{align-self:flex-end;background:rgba(92,124,255,.25);color:#eef2ff;max-width:88%}
+.msg.assistant{align-self:flex-start;background:rgba(255,255,255,.09);color:#f2f4f8;max-width:88%}
+.msg .label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#9fa8b8;margin-bottom:3px}
+#liveTranscript{display:block;width:min(620px,100%);min-height:20px;margin-top:6px;padding:7px 12px;border-radius:12px;background:rgba(255,255,255,.055);color:#aeb7c8;font-size:13px;line-height:1.35;text-align:left;overflow:hidden}
+#liveTranscript strong{color:#e7eaf0}
+
 .call-screen{display:none;flex:1;min-height:calc(100vh - 76px);flex-direction:column;align-items:center;text-align:center;padding:22px 24px 38px}
 .call-screen.active{display:flex}
 .call-name{font-size:25px;font-weight:650;margin-top:8px}
@@ -294,6 +301,8 @@ h1{font-size:38px;margin:0 0 8px;font-weight:650}
   <div id="callTimer" class="timer">00:00</div>
   <div id="callAvatar" class="avatar"><div class="avatar-core">J</div></div>
   <div id="callCaption" class="call-caption">Hi Lakshman, I'm listening.</div>
+  <section id="conversation"></section>
+  <div id="liveTranscript"><strong>Live:</strong> Waiting for conversation...</div>
   <div class="call-controls">
     <button id="muteButton" class="call-control" onclick="toggleMute()" aria-label="Mute microphone">🎙️<span>Mute</span></button>
     <button id="stopButton" class="call-control end" onclick="stopConversation()" aria-label="End call">☎<span>End</span></button>
@@ -301,8 +310,6 @@ h1{font-size:38px;margin:0 0 8px;font-weight:650}
 </section>
 
 <div id="status">Ready</div>
-<div id="liveTranscript"><strong>Live:</strong> Waiting for conversation...</div>
-<section id="conversation"></section>
 </main>
 <script>
 const voiceButton=document.getElementById("voiceButton");
@@ -317,7 +324,7 @@ const callAvatar=document.getElementById("callAvatar");
 const muteButton=document.getElementById("muteButton");
 const conversation=document.getElementById("conversation");
 const liveTranscript=document.getElementById("liveTranscript");
-let recognition=null, active=false, speaking=false, muted=false;
+let recognition=null, active=false, speaking=false, processing=false, muted=false;
 let recorder=null, mediaStream=null, silenceTimer=null, recordStartedAt=0;
 let callStartedAt=0, callTimerInterval=null;
 let localTranscriber=null, localTranscriberPromise=null;
@@ -344,11 +351,15 @@ function toggleMute(){
   setCallStatus(muted?"Microphone muted":"Listening...");
 }
 function addMessage(who,text,cls){
-  liveTranscript.innerHTML="<strong>"+who+":</strong> "+text;
   const div=document.createElement("div"); div.className="msg "+cls;
   const label=document.createElement("div"); label.className="label"; label.textContent=who;
   const body=document.createElement("div"); body.textContent=text;
-  div.append(label,body); conversation.appendChild(div); conversation.scrollTop=conversation.scrollHeight;
+  div.append(label,body); conversation.appendChild(div);
+  conversation.scrollTop=conversation.scrollHeight;
+  liveTranscript.innerHTML="<strong>"+who+":</strong> "+text;
+}
+function setLiveTranscript(text){
+  liveTranscript.innerHTML="<strong>You:</strong> "+(text||"");
 }
 function chooseFemaleVoice(){
   const voices=speechSynthesis.getVoices();
@@ -482,7 +493,7 @@ async function startConversation(){
   if(Recognition){
     recognition=new Recognition();
     recognition.lang="en-IN";
-    recognition.interimResults=false;
+    recognition.interimResults=true;
     recognition.continuous=false;
     recognition.onstart=()=>{
       setCallStatus(muted?"Microphone muted":"Listening...");
@@ -491,8 +502,15 @@ async function startConversation(){
       setCallCaption(muted?"Microphone is muted":"Listening...");
     };
     recognition.onresult=async e=>{
-      const text=e.results[0][0].transcript;
-      await handleUserText(text);
+      let transcript="";
+      let finalResult=false;
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        transcript+=e.results[i][0].transcript;
+        if(e.results[i].isFinal)finalResult=true;
+      }
+      transcript=transcript.trim();
+      if(transcript)setLiveTranscript(transcript);
+      if(finalResult && transcript)await handleUserText(transcript);
     };
     recognition.onerror=e=>{
       if(!active)return;
@@ -504,7 +522,7 @@ async function startConversation(){
       else {setCallStatus("Listening...");setTimeout(startListening,1500);}
     };
     recognition.onend=()=>{
-      if(active&&!speaking)setTimeout(startListening,isIOS?3500:250);
+      if(active&&!speaking&&!processing)setTimeout(startListening,isIOS?3500:250);
     };
 
     // iOS Safari has a WebKit bug where audio playback can break the next
@@ -543,7 +561,9 @@ async function startConversation(){
   startRecorder();
 }
 async function handleUserText(text){
-  if(!text)return;
+  if(!text||processing)return;
+  processing=true;
+  setLiveTranscript(text);
   addMessage("You",text,"user"); setCallStatus("Jaanu is thinking...");
   setCallCaption(text); callAvatar.classList.remove("listening");
   try{
@@ -563,12 +583,20 @@ async function handleUserText(text){
       }
     }
   }catch(err){
-    status.textContent="Could not contact Jaanu.";
-    if(active)setTimeout(()=>recognition?startListening():startRecorder(),1000);
+    setCallStatus("Jaanu could not reply.");
+    setCallCaption("I could not reach the assistant. Please try again.");
+    setLiveTranscript("Connection error: "+(err.message||"unknown error"));
+    callAvatar.classList.remove("speaking");
+  }finally{
+    processing=false;
+    if(active){
+      if(recognition)setTimeout(startListening,350);
+      else setTimeout(startRecorder,350);
+    }
   }
 }
 function startListening(){
-  if(!active||speaking||!recognition||muted)return;
+  if(!active||speaking||processing||!recognition||muted)return;
   try{recognition.start()}catch(e){setTimeout(startListening,500)}
 }
 async function getLocalTranscriber(){
