@@ -39,15 +39,34 @@ def parse_task(text: str) -> dict | None:
 
     # Extract the actual task text.
     if reminder_phrase:
-        reminder_match = re.search(
-            r"\bremind\s+me\s+(?:to\s+)?(.+?)(?=\s+(?:at|on|tomorrow|today|before|by)\b|$)",
-            lower,
+        # Handle both common forms:
+        # "remind me to call Arun at 6 PM"
+        # "remind me at 6 PM to call Arun"
+        marker = reminder_phrase.end()
+        suffix = lower[marker:].strip(" ,")
+        prefix = lower[:reminder_phrase.start()].strip(" ,")
+        time_in_suffix = re.search(
+            r"\b(?:at|before|by)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b",
+            suffix,
         )
-        if reminder_match and reminder_match.group(1).strip():
-            task = reminder_match.group(1).strip()
+
+        if time_in_suffix:
+            before_time = suffix[:time_in_suffix.start()].strip(" ,")
+            after_time = suffix[time_in_suffix.end():].strip(" ,")
+            # If the user repeats "remind me" at the end, ignore that
+            # trailing conversational instruction.
+            after_time = re.split(r"\s+remind\s+me\b", after_time, maxsplit=1)[0].strip(" ,")
+            before_time = re.sub(r"^(?:to\s+)?(?:tomorrow|today)\b\s*", "", before_time).strip()
+            if before_time and before_time not in {"to", "tomorrow", "today"}:
+                task = re.sub(r"^to\s+", "", before_time).strip()
+            elif after_time:
+                task = re.sub(r"^(?:to\s+)?(?:tomorrow|today)\b\s*", "", after_time).strip()
+            elif prefix:
+                task = prefix
+            else:
+                task = suffix
         else:
-            prefix = lower.split("remind me", 1)[0].strip(" ,")
-            task = prefix or original
+            task = re.sub(r"^to\s+", "", suffix).strip() or prefix or original
     elif reminder_word:
         reminder_match = re.search(
             r"\breminder\b\s*(?:to|for|about|:|-)?\s*(.+?)(?=\s+(?:at|on|tomorrow|today|before|by)\b|$)",
