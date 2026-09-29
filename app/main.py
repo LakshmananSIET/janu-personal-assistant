@@ -229,29 +229,77 @@ HTML = """
 <link rel="manifest" href="/manifest.json">
 <title>Jaanu — Personal Assistant</title>
 <style>
-*{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;
-background:linear-gradient(135deg,#f7f8fc,#eef2ff);font-family:Arial,sans-serif}
-.card{width:min(94vw,620px);padding:28px 22px;background:#fff;border-radius:28px;
-box-shadow:0 16px 50px rgba(0,0,0,.09)} h1{text-align:center;margin:0;font-size:36px}
-.subtitle{text-align:center;color:#666;margin:8px 0 20px}.controls{text-align:center}
-button{border:0;border-radius:999px;padding:13px 18px;margin:4px;font-size:16px;
-cursor:pointer;background:#111;color:#fff}button:disabled{opacity:.5}
-#status{text-align:center;color:#666;min-height:24px;margin:15px 0}
-#conversation{max-height:360px;overflow:auto;margin-top:12px;border-top:1px solid #eee;padding-top:8px}.msg{padding:11px 14px;margin:8px 0;
-border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.assistant{background:#f4f4f4}.label{font-size:12px;color:#777;margin-bottom:3px}
-#liveTranscript{margin-top:12px;padding:12px 14px;border-radius:14px;background:#fafafa;border:1px dashed #ccc;color:#555;min-height:46px;text-align:left}
-#liveTranscript strong{color:#222}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:#080b12;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif}
+body{min-height:100vh;color:#fff}
+.card{width:100%;min-height:100vh;background:radial-gradient(circle at 50% 28%,#26314a 0%,#111827 34%,#070a10 72%);display:flex;flex-direction:column;overflow:hidden}
+.topbar{height:76px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;color:#fff}
+.brand{font-size:21px;font-weight:650;letter-spacing:.2px}
+.topbar button{border:0;background:rgba(255,255,255,.09);color:#fff;border-radius:50%;width:42px;height:42px;font-size:18px;cursor:pointer}
+.landing{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 22px 55px;text-align:center}
+.landing .avatar{width:118px;height:118px;margin-bottom:24px}
+h1{font-size:38px;margin:0 0 8px;font-weight:650}
+.subtitle{color:#b9c0cf;font-size:16px;max-width:340px;line-height:1.5;margin-bottom:30px}
+#voiceButton{border:0;border-radius:999px;padding:16px 30px;font-size:17px;font-weight:600;cursor:pointer;background:#fff;color:#111;box-shadow:0 8px 30px rgba(0,0,0,.25)}
+#voiceButton:disabled{opacity:.5}
+#status{display:none}
+#conversation,#liveTranscript{display:none}
+.call-screen{display:none;flex:1;min-height:calc(100vh - 76px);flex-direction:column;align-items:center;text-align:center;padding:22px 24px 38px}
+.call-screen.active{display:flex}
+.call-name{font-size:25px;font-weight:650;margin-top:8px}
+.call-status{font-size:15px;color:#aeb7c8;margin-top:7px;min-height:22px}
+.avatar{position:relative;width:154px;height:154px;border-radius:50%;display:grid;place-items:center;margin-top:14vh;margin-bottom:25px;background:linear-gradient(145deg,#ffb5cf,#9d7cff 52%,#5c7cff);box-shadow:0 0 0 1px rgba(255,255,255,.15),0 20px 70px rgba(111,93,255,.35)}
+.avatar::before,.avatar::after{content:"";position:absolute;inset:-13px;border:1px solid rgba(255,255,255,.13);border-radius:50%;animation:ring 2.2s infinite ease-out}
+.avatar::after{inset:-28px;animation-delay:1.1s}
+.avatar.listening::before,.avatar.listening::after{border-color:rgba(132,170,255,.32)}
+.avatar.speaking{box-shadow:0 0 0 1px rgba(255,255,255,.18),0 0 70px rgba(255,145,196,.4)}
+.avatar-core{font-size:48px;font-weight:700;color:#fff;text-shadow:0 2px 14px rgba(0,0,0,.2)}
+@keyframes ring{0%{transform:scale(.92);opacity:.7}100%{transform:scale(1.14);opacity:0}}
+.call-caption{min-height:56px;max-width:620px;padding:0 20px;color:#e6e9ef;font-size:18px;line-height:1.45;display:flex;align-items:center;justify-content:center}
+.call-controls{margin-top:auto;display:flex;align-items:center;justify-content:center;gap:28px;padding-top:34px}
+.call-control{width:62px;height:62px;border:0;border-radius:50%;cursor:pointer;font-size:24px;color:#fff;background:rgba(255,255,255,.12);backdrop-filter:blur(12px)}
+.call-control span{display:block;font-size:11px;margin-top:5px;color:#d8dce5}
+.call-control.end{width:72px;height:72px;background:#ef4444;font-size:27px}
+.call-control.muted{background:#fff;color:#111}
+#clearButton{border:0;background:transparent;color:#9da6b7;margin-top:18px;font-size:14px;cursor:pointer}
+.timer{font-variant-numeric:tabular-nums;color:#9fa8b8;font-size:14px;margin-top:5px}
+@media(max-width:600px){
+  .topbar{height:68px;padding:0 18px}
+  .landing{padding-bottom:45px}
+  .avatar{margin-top:12vh;width:138px;height:138px}
+  .avatar-core{font-size:43px}
+  .call-name{font-size:24px}
+  .call-caption{font-size:17px;max-width:350px}
+}
 </style>
 </head>
 <body>
 <main class="card">
-<h1>Jaanu</h1>
-<div class="subtitle">Hi Lakshman, I'm Jaanu. How can I help you?</div>
-<div class="controls">
-<button id="voiceButton" onclick="startConversation()">🎙️ Start Conversation</button>
-<button id="stopButton" onclick="stopConversation()" disabled>⏹ Stop</button>
-<button onclick="clearConversation()">🗑 Clear</button>
-</div>
+<header class="topbar">
+  <div class="brand">Jaanu</div>
+  <button onclick="clearConversation()" aria-label="Clear conversation">⋯</button>
+</header>
+
+<section id="landing" class="landing">
+  <div class="avatar"><div class="avatar-core">J</div></div>
+  <h1>Jaanu</h1>
+  <div class="subtitle">Your personal AI assistant. Talk naturally, just like a phone call.</div>
+  <button id="voiceButton" onclick="startConversation()">☎️ Start Call</button>
+  <button id="clearButton" onclick="clearConversation()">New conversation</button>
+</section>
+
+<section id="callScreen" class="call-screen">
+  <div class="call-name">Jaanu</div>
+  <div id="callStatus" class="call-status">Connecting...</div>
+  <div id="callTimer" class="timer">00:00</div>
+  <div id="callAvatar" class="avatar"><div class="avatar-core">J</div></div>
+  <div id="callCaption" class="call-caption">Hi Lakshman, I'm listening.</div>
+  <div class="call-controls">
+    <button id="muteButton" class="call-control" onclick="toggleMute()" aria-label="Mute microphone">🎙️<span>Mute</span></button>
+    <button id="stopButton" class="call-control end" onclick="stopConversation()" aria-label="End call">☎<span>End</span></button>
+  </div>
+</section>
+
 <div id="status">Ready</div>
 <div id="liveTranscript"><strong>Live:</strong> Waiting for conversation...</div>
 <section id="conversation"></section>
@@ -260,14 +308,41 @@ border-radius:15px;background:#f1f3f6}.user{background:#e8f0ff}.assistant{backgr
 const voiceButton=document.getElementById("voiceButton");
 const stopButton=document.getElementById("stopButton");
 const status=document.getElementById("status");
+const landing=document.getElementById("landing");
+const callScreen=document.getElementById("callScreen");
+const callStatus=document.getElementById("callStatus");
+const callTimer=document.getElementById("callTimer");
+const callCaption=document.getElementById("callCaption");
+const callAvatar=document.getElementById("callAvatar");
+const muteButton=document.getElementById("muteButton");
 const conversation=document.getElementById("conversation");
 const liveTranscript=document.getElementById("liveTranscript");
-let recognition=null, active=false, speaking=false;
+let recognition=null, active=false, speaking=false, muted=false;
 let recorder=null, mediaStream=null, silenceTimer=null, recordStartedAt=0;
+let callStartedAt=0, callTimerInterval=null;
 let localTranscriber=null, localTranscriberPromise=null;
 let sessionId=localStorage.getItem("janu_session_id");
 if(!sessionId){sessionId=crypto.randomUUID();localStorage.setItem("janu_session_id",sessionId);}
 
+function setCallStatus(text){
+  callStatus.textContent=text;
+  status.textContent=text;
+}
+function setCallCaption(text){callCaption.textContent=text||"";}
+function startCallTimer(){
+  callStartedAt=Date.now();
+  clearInterval(callTimerInterval);
+  const tick=()=>{const sec=Math.floor((Date.now()-callStartedAt)/1000);callTimer.textContent=String(Math.floor(sec/60)).padStart(2,"0")+":"+String(sec%60).padStart(2,"0")};
+  tick(); callTimerInterval=setInterval(tick,1000);
+}
+function stopCallTimer(){clearInterval(callTimerInterval);callTimerInterval=null;callTimer.textContent="00:00";}
+function toggleMute(){
+  muted=!muted;
+  if(mediaStream)mediaStream.getAudioTracks().forEach(t=>t.enabled=!muted);
+  muteButton.classList.toggle("muted",muted);
+  muteButton.innerHTML=muted?"🔇<span>Unmute</span>":"🎙️<span>Mute</span>";
+  setCallStatus(muted?"Microphone muted":"Listening...");
+}
 function addMessage(who,text,cls){
   liveTranscript.innerHTML="<strong>"+who+":</strong> "+text;
   const div=document.createElement("div"); div.className="msg "+cls;
@@ -392,8 +467,12 @@ function autoEnableRemindersFromGesture(){
 async function startConversation(){
   if(active)return;
   autoEnableRemindersFromGesture();
-  active=true; voiceButton.disabled=true; stopButton.disabled=false;
-  status.textContent="Jaanu is greeting you...";
+  active=true; voiceButton.disabled=true; landing.style.display="none"; callScreen.classList.add("active");
+  stopButton.disabled=false; muteButton.disabled=false; muted=false;
+  muteButton.classList.remove("muted"); muteButton.innerHTML="🎙️<span>Mute</span>";
+  startCallTimer();
+  setCallStatus("Calling...");
+  setCallCaption("Hi Lakshman, I'm Jaanu. How can I help you?");
   const greeting="Hi Lakshmanan, I am Jaanu. How can I help you?";
   addMessage("Jaanu",greeting,"assistant");
 
@@ -406,8 +485,10 @@ async function startConversation(){
     recognition.interimResults=false;
     recognition.continuous=false;
     recognition.onstart=()=>{
-      status.textContent="Listening... Speak now.";
-      liveTranscript.innerHTML="<strong>You:</strong> Listening... Speak now.";
+      setCallStatus(muted?"Microphone muted":"Listening...");
+      callAvatar.classList.add("listening");
+      callAvatar.classList.remove("speaking");
+      setCallCaption(muted?"Microphone is muted":"Listening...");
     };
     recognition.onresult=async e=>{
       const text=e.results[0][0].transcript;
@@ -416,11 +497,11 @@ async function startConversation(){
     recognition.onerror=e=>{
       if(!active)return;
       if(e.error==="not-allowed"||e.error==="service-not-allowed"){
-        status.textContent="Microphone/speech permission was blocked. Allow microphone access and Siri/Dictation.";
+        setCallStatus("Microphone permission is needed. Please allow it in your browser.");
         return;
       }
-      if(e.error==="no-speech"||e.error==="aborted")setTimeout(startListening,1000);
-      else setTimeout(startListening,1500);
+      if(e.error==="no-speech"||e.error==="aborted"){setCallStatus("Listening...");setTimeout(startListening,1000);}
+      else {setCallStatus("Listening...");setTimeout(startListening,1500);}
     };
     recognition.onend=()=>{
       if(active&&!speaking)setTimeout(startListening,isIOS?3500:250);
@@ -432,12 +513,12 @@ async function startConversation(){
     if(isIOS){
       await browserSpeak(greeting);
       if(!active)return;
-      status.textContent="Preparing microphone...";
+      setCallStatus("Preparing microphone...");
       try{
         const stream=await navigator.mediaDevices.getUserMedia({audio:true});
         stream.getTracks().forEach(t=>t.stop());
       }catch(e){
-        status.textContent="Please allow microphone access.";
+        setCallStatus("Please allow microphone access.");
         stopConversation();
         return;
       }
@@ -463,15 +544,19 @@ async function startConversation(){
 }
 async function handleUserText(text){
   if(!text)return;
-  addMessage("You",text,"user"); status.textContent="Jaanu is thinking...";
+  addMessage("You",text,"user"); setCallStatus("Jaanu is thinking...");
+  setCallCaption(text); callAvatar.classList.remove("listening");
   try{
     const result=await askJaanu(text); addMessage("Jaanu",result.reply,"assistant");
-    status.textContent="Jaanu is speaking...";
+    setCallStatus("Jaanu is speaking...");
+    setCallCaption(result.reply); callAvatar.classList.add("speaking");
     if(/iPhone|iPad|iPod/i.test(navigator.userAgent)){
       await browserSpeak(result.reply);
+      callAvatar.classList.remove("speaking");
       if(active)setTimeout(startListening,3500);
     }else{
       await speak(result.reply);
+      callAvatar.classList.remove("speaking");
       if(active){
         if(recognition)setTimeout(startListening,250);
         else setTimeout(startRecorder,250);
@@ -483,7 +568,7 @@ async function handleUserText(text){
   }
 }
 function startListening(){
-  if(!active||speaking||!recognition)return;
+  if(!active||speaking||!recognition||muted)return;
   try{recognition.start()}catch(e){setTimeout(startListening,500)}
 }
 async function getLocalTranscriber(){
@@ -539,7 +624,7 @@ async function transcribeLocally(blob){
 }
 
 async function startRecorder(){
-  if(!active||speaking)return;
+  if(!active||speaking||muted)return;
   try{
     if(!navigator.mediaDevices?.getUserMedia)throw new Error("Microphone is not available");
     if(!mediaStream)mediaStream=await navigator.mediaDevices.getUserMedia({audio:true});
@@ -552,8 +637,10 @@ async function startRecorder(){
     recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
     recorder.onstart=()=>{
       recordStartedAt=Date.now();
-      status.textContent="Listening...";
-      liveTranscript.innerHTML="<strong>You:</strong> Listening... Speak now.";
+      setCallStatus(muted?"Microphone muted":"Listening...");
+      callAvatar.classList.add("listening");
+      callAvatar.classList.remove("speaking");
+      setCallCaption(muted?"Microphone is muted":"Listening...");
       startSilenceDetection();
     };
     recorder.onstop=async()=>{
@@ -605,12 +692,20 @@ function stopSilenceDetection(){
   silenceTimer=null;
 }
 function stopConversation(){
-  active=false; speaking=false;
+  active=false; speaking=false; muted=false;
   try{recognition&&recognition.stop()}catch(e){}
   try{recorder&&recorder.stop()}catch(e){}
   stopSilenceDetection();
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null}
-  speechSynthesis?.cancel(); voiceButton.disabled=false; stopButton.disabled=true; status.textContent="Conversation stopped";
+  speechSynthesis?.cancel();
+  stopCallTimer();
+  callAvatar.classList.remove("listening","speaking");
+  callScreen.classList.remove("active");
+  landing.style.display="flex";
+  voiceButton.disabled=false; stopButton.disabled=true;
+  muteButton.disabled=false; muteButton.classList.remove("muted"); muteButton.innerHTML="🎙️<span>Mute</span>";
+  setCallStatus("Conversation ended");
+  setCallCaption("");
 }
 navigator.serviceWorker?.addEventListener(\"message\",event=>{if(event.data?.type===\"jaanu-reminder\"){window.focus();startConversation();}});
 async function clearConversation(){
@@ -618,6 +713,7 @@ async function clearConversation(){
   const oldSession=sessionId;
   sessionId=crypto.randomUUID(); localStorage.setItem("janu_session_id",sessionId);
   try{await fetch("/session/"+oldSession,{method:"DELETE"})}catch(e){}
+  landing.style.display="flex"; callScreen.classList.remove("active");
   status.textContent="New conversation ready";
 }
 </script>
