@@ -3,6 +3,7 @@ uvicorn[standard]
 python-multipart
 openpyxl
 openai
+google-genai
 pywebpush
 edge-tts
 gradio_client
