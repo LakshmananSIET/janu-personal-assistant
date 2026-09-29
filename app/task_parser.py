@@ -8,43 +8,61 @@ from zoneinfo import ZoneInfo
 IST = ZoneInfo("Asia/Kolkata")
 
 
+def _is_negated(text: str, keyword: str) -> bool:
+    """Ignore phrases such as 'don't remind me' and 'no reminder'."""
+    match = re.search(rf"\b{re.escape(keyword)}\b", text)
+    if not match:
+        return False
+    prefix = text[max(0, match.start() - 35):match.start()]
+    return bool(re.search(r"\b(?:no|not|don't|dont|do not|never)\b", prefix))
+
+
 def parse_task(text: str) -> dict | None:
-    """Offline fallback parser used when the free trial has no paid AI API."""
-    lower = text.lower().strip()
+    """Create a task only when the user explicitly says 'task' or asks to be reminded."""
+    original = text.strip()
+    lower = original.lower()
 
     reminder_phrase = re.search(r"\bremind\s+me\b", lower)
-    reminder_match = re.search(
-        r"\bremind\s+me\s+(?:to\s+)?(.+?)(?=\s+(?:at|on|tomorrow|today|before|by)\b|$)",
-        lower,
-    )
+    reminder_word = re.search(r"\breminder\b", lower)
+    task_word = re.search(r"\btask\b", lower)
 
-    task_match = re.search(
-        r"(?:need to|have to|must|should|finish|complete|do)\s+(.+?)(?=\s+(?:before|by|at|tomorrow|today|on)\b|$)",
-        lower,
-    )
-
-    has_task_signal = (
-        reminder_phrase is not None
-        or any(
-            phrase in lower
-            for phrase in ("need to", "have to", "must", "should", "finish", "complete")
-        )
-    )
-    if not has_task_signal:
+    # Normal conversation must stay normal conversation.
+    # Words such as "need", "finish", "complete", "do", etc. are NOT task triggers.
+    if not task_word and not reminder_phrase and not reminder_word:
         return None
 
-    if reminder_phrase and not (reminder_match and reminder_match.group(1).strip()):
-        # Example: "For ticket booking remind me at 4:30 PM"
-        prefix = lower.split("remind me", 1)[0].strip(" ,")
-        task = prefix or text.strip()
-    elif reminder_match:
-        task = reminder_match.group(1).strip()
-    elif task_match:
-        task = task_match.group(1).strip()
-    else:
-        task = text.strip()
+    # Do not create a task from a negative request such as "no, don't remind me".
+    if reminder_phrase and _is_negated(lower, "remind"):
+        return None
+    if reminder_word and _is_negated(lower, "reminder"):
+        return None
 
-    task = re.sub(r"\s+", " ", task).strip(" .,")
+    # Extract the actual task text.
+    if reminder_phrase:
+        reminder_match = re.search(
+            r"\bremind\s+me\s+(?:to\s+)?(.+?)(?=\s+(?:at|on|tomorrow|today|before|by)\b|$)",
+            lower,
+        )
+        if reminder_match and reminder_match.group(1).strip():
+            task = reminder_match.group(1).strip()
+        else:
+            prefix = lower.split("remind me", 1)[0].strip(" ,")
+            task = prefix or original
+    elif reminder_word:
+        reminder_match = re.search(
+            r"\breminder\b\s*(?:to|for|about|:|-)?\s*(.+?)(?=\s+(?:at|on|tomorrow|today|before|by)\b|$)",
+            lower,
+        )
+        task = reminder_match.group(1).strip() if reminder_match and reminder_match.group(1).strip() else original
+    else:
+        # Explicit "task" keyword, e.g. "task: go shopping at 6 PM".
+        task_match = re.search(r"\btask\b\s*[:\-]?\s*(.*)$", lower)
+        task = task_match.group(1).strip() if task_match and task_match.group(1).strip() else original
+        task = re.sub(r"^(?:create|add|make|take)\s+(?:a\s+)?task\s*[:\-]?\s*", "", task).strip()
+
+    task = re.sub(r"\s+", " ", task).strip(" .,:-")
+    if not task:
+        return None
 
     now = datetime.now(IST)
     due_date = None
@@ -75,7 +93,8 @@ def parse_task(text: str) -> dict | None:
         if re.search(r"\b(?:before|by)\b", lower):
             deadline = time_text
 
-        if reminder_phrase:
+        # Only reminder language schedules an actual notification.
+        if reminder_phrase or reminder_word:
             reminder_date = (
                 datetime.fromisoformat(due_date).date()
                 if due_date
@@ -97,5 +116,5 @@ def parse_task(text: str) -> dict | None:
         "deadline": deadline,
         "reminder_at": reminder_at,
         "status": "pending",
-        "source_text": text,
+        "source_text": original,
     }
