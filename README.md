@@ -1,6 +1,6 @@
-# Janu Personal Assistant
+# Jaanu Personal Assistant
 
-Janu is Lakshman's personal browser-based voice assistant.
+Jaanu is Lakshman's personal browser-based voice assistant.
 
 ## Current trial
 
@@ -20,7 +20,7 @@ Janu is Lakshman's personal browser-based voice assistant.
 4. Start: `uvicorn app.main:app --host 0.0.0.0 --port 8000`
 5. Open the site from a browser.
 
-For the no-API-key trial, Janu can still use the local fallback parser.
+For the no-API-key trial, Jaanu can still use the local fallback parser.
 
 ## Data and secrets
 
