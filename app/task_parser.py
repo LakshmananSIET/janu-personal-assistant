@@ -60,6 +60,9 @@ def parse_task(text: str) -> dict | None:
         task = task_match.group(1).strip() if task_match and task_match.group(1).strip() else original
         task = re.sub(r"^(?:create|add|make|take)\s+(?:a\s+)?task\s*[:\-]?\s*", "", task).strip()
 
+    # Remove scheduling words from the stored task title.
+    task = re.sub(r"\b(?:tomorrow|today)\b", "", task)
+    task = re.sub(r"\s+(?:at|before|by)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b.*$", "", task)
     task = re.sub(r"\s+", " ", task).strip(" .,:-")
     if not task:
         return None
