@@ -25,16 +25,20 @@ def parse_task(text: str) -> dict | None:
     reminder_phrase = re.search(r"\bremind\s+me\b", lower)
     reminder_word = re.search(r"\breminder\b", lower)
     task_word = re.search(r"\btask\b", lower)
+    reminder_intent = bool(reminder_phrase or reminder_word)
+    task_intent = bool(task_word and not reminder_intent)
 
     # Normal conversation must stay normal conversation.
     # Words such as "need", "finish", "complete", "do", etc. are NOT task triggers.
-    if not task_word and not reminder_phrase and not reminder_word:
+    if not task_intent and not reminder_intent:
         return None
 
     # Do not create a task from a negative request such as "no, don't remind me".
     if reminder_phrase and _is_negated(lower, "remind"):
         return None
     if reminder_word and _is_negated(lower, "reminder"):
+        return None
+    if task_intent and re.search(r"\b(?:no\s+task|not\s+(?:a\s+)?task|don\'t\s+(?:add|create|make)\s+(?:a\s+)?task|do\s+not\s+(?:add|create|make)\s+(?:a\s+)?task)\b", lower):
         return None
 
     # Extract the actual task text.
@@ -116,7 +120,7 @@ def parse_task(text: str) -> dict | None:
             deadline = time_text
 
         # Only reminder language schedules an actual notification.
-        if reminder_phrase or reminder_word:
+        if reminder_intent:
             reminder_date = (
                 datetime.fromisoformat(due_date).date()
                 if due_date
@@ -134,6 +138,7 @@ def parse_task(text: str) -> dict | None:
 
     return {
         "task": task,
+        "kind": "reminder" if reminder_intent else "task",
         "due_date": due_date,
         "deadline": deadline,
         "reminder_at": reminder_at,
