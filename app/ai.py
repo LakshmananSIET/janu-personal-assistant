@@ -13,8 +13,10 @@ Speak naturally and simply. Use conversation history.
 If the user adds information to a previous task, connect it to that task.
 IMPORTANT TASK RULE:
 - Treat normal conversation as chat.
-- Create a task only when the user explicitly uses the word "task".
+- Create a task only when the user explicitly uses the word "task" (for example, "add task: buy milk").
 - Create a reminder only when the user explicitly says "remind me" or "reminder".
+- A reminder is a notification request; a task is only a saved task and must not create a notification unless the user also explicitly asks to be reminded.
+- If the user asks a normal question or has normal conversation, use intent "chat" and answer naturally.
 - Do NOT turn ordinary sentences containing "need", "finish", "complete", "do", "should", or "have to" into tasks.
 - Do NOT create a reminder/task when the user is rejecting a reminder, such as "no, don't remind me".
 Use ISO 8601 with Asia/Kolkata offset for reminder_at when a time is known.
@@ -26,7 +28,7 @@ Do not invent missing dates or times. Return only the requested JSON.
 TASK_SCHEMA = {
     "type": "object",
     "properties": {
-        "intent": {"type": "string", "enum": ["chat", "create_task", "list_tasks", "complete_task"]},
+        "intent": {"type": "string", "enum": ["chat", "create_task", "create_reminder", "list_tasks", "complete_task"]},
         "task": {"type": ["string", "null"]},
         "due_date": {"type": ["string", "null"]},
         "deadline": {"type": ["string", "null"]},
