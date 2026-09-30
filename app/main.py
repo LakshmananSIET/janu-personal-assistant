@@ -304,6 +304,7 @@ h1{font-size:38px;margin:0 0 8px;font-weight:650}
   <section id="conversation"></section>
   <div id="liveTranscript"><strong>Live:</strong> Waiting for conversation...</div>
   <div class="call-controls">
+    <button id="notifyButton" class="call-control" onclick="enableNotifications()" aria-label="Enable reminders">🔔<span>Reminders</span></button>
     <button id="muteButton" class="call-control" onclick="toggleMute()" aria-label="Mute microphone">🎙️<span>Mute</span></button>
     <button id="stopButton" class="call-control end" onclick="stopConversation()" aria-label="End call">☎<span>End</span></button>
   </div>
@@ -324,6 +325,7 @@ const callAvatar=document.getElementById("callAvatar");
 const muteButton=document.getElementById("muteButton");
 const conversation=document.getElementById("conversation");
 const liveTranscript=document.getElementById("liveTranscript");
+const notifyButton=document.getElementById("notifyButton");
 let recognition=null, active=false, speaking=false, processing=false, muted=false;
 let recorder=null, mediaStream=null, silenceTimer=null, recordStartedAt=0;
 let currentPlayer=null, bargeInTimer=null;
@@ -452,41 +454,69 @@ async function askJaanu(text){
 }
 async function registerPushSubscription(){
   try{
-    if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window))return false;
+    if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window)){
+      throw new Error("This browser does not support web notifications.");
+    }
     const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
     const standalone=window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true;
-    if(isIOS && !standalone)return false;
+    if(isIOS && !standalone){
+      throw new Error("On iPhone, add Jaanu to the Home Screen first, then open it from the Home Screen.");
+    }
     const reg=await navigator.serviceWorker.register("/service-worker.js");
-    const keyResponse=await fetch("/push/public-key");
+    await navigator.serviceWorker.ready;
+    const keyResponse=await fetch("/push/public-key",{cache:"no-store"});
     const data=await keyResponse.json();
-    if(!data.public_key)return false;
+    if(!data.public_key)throw new Error("VAPID public key is missing on the server.");
     let sub=await reg.pushManager.getSubscription();
     if(!sub){
       const raw=atob(data.public_key.replace(/-/g,"+").replace(/_/g,"/")+"=".repeat((4-data.public_key.length%4)%4));
       const key=Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));
       sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
     }
-    await fetch("/push/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sub.toJSON())});
+    const response=await fetch("/push/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sub.toJSON())});
+    if(!response.ok)throw new Error("Jaanu could not save this notification subscription.");
+    await reg.showNotification("Jaanu reminders enabled",{
+      body:"Notification test successful. I can now send your reminders.",
+      tag:"jaanu-notification-test"
+    });
+    notifyButton.innerHTML="🔔<span>Enabled</span>";
+    notifyButton.classList.add("muted");
+    setCallStatus("Reminders enabled.");
     return true;
-  }catch(e){return false}
+  }catch(e){
+    setCallStatus("Reminder notifications not enabled.");
+    setLiveTranscript("<strong>Notification:</strong> "+(e.message||"Setup failed"));
+    return false;
+  }
+}
+
+async function enableNotifications(){
+  if(!("Notification" in window)){
+    setCallStatus("This browser does not support notifications.");
+    return;
+  }
+  if(Notification.permission==="denied"){
+    setCallStatus("Notifications are blocked. Allow notifications for Jaanu in browser site settings.");
+    setLiveTranscript("<strong>Notification:</strong> Permission is blocked. Open the site lock/settings and allow Notifications.");
+    return;
+  }
+  try{
+    const permission=Notification.permission==="granted" ? "granted" : await Notification.requestPermission();
+    if(permission!=="granted"){
+      setCallStatus("Please allow notifications for Jaanu.");
+      setLiveTranscript("<strong>Notification:</strong> Permission was not granted.");
+      return;
+    }
+    await registerPushSubscription();
+  }catch(e){
+    setCallStatus("Notification setup failed.");
+    setLiveTranscript("<strong>Notification:</strong> "+(e.message||"Unknown error"));
+  }
 }
 
 function autoEnableRemindersFromGesture(){
-  if(!("Notification" in window))return;
-  const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent);
-  const standalone=window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true;
-  if(isIOS && !standalone)return;
-  if(Notification.permission==="granted"){
-    registerPushSubscription();
-    return;
-  }
-  if(Notification.permission==="default"){
-    Notification.requestPermission().then(permission=>{
-      if(permission==="granted")registerPushSubscription();
-    }).catch(()=>{});
-  }
+  if("Notification" in window && Notification.permission==="granted")registerPushSubscription();
 }
-
 async function startConversation(){
   if(active)return;
   autoEnableRemindersFromGesture();
@@ -808,6 +838,18 @@ async function clearConversation(){
 @app.get("/service-worker.js", response_class=HTMLResponse)
 async def service_worker():
     return HTMLResponse(SERVICE_WORKER, media_type="application/javascript")
+
+@app.get("/manifest.json")
+async def manifest():
+    return Response(content=json.dumps({
+        "name":"Jaanu Personal Assistant",
+        "short_name":"Jaanu",
+        "start_url":"/",
+        "display":"standalone",
+        "background_color":"#080b12",
+        "theme_color":"#080b12",
+        "icons":[]
+    }), media_type="application/manifest+json")
 
 
 @app.get("/", response_class=HTMLResponse)
