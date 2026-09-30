@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from openai import OpenAI
+
+logger = logging.getLogger("jaanu.ai")
 
 SYSTEM_PROMPT = """
 You are Jaanu, a friendly female personal AI assistant for Lakshman.
@@ -57,6 +60,7 @@ def _fallback_result() -> dict:
 def _gemini_result(message: str, history: list[dict[str, str]] | None = None) -> dict | None:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
+        logger.error("GEMINI_API_KEY is missing")
         return None
 
     try:
@@ -80,9 +84,10 @@ def _gemini_result(message: str, history: list[dict[str, str]] | None = None) ->
             )
         )
 
+        model = os.getenv("JANU_AI_MODEL", "gemini-3.8-flash")
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
-            model=os.getenv("JANU_AI_MODEL", "gemini-3.7-flash"),
+            model=model,
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT + f"\nCurrent Asia/Kolkata time: {now}",
@@ -91,8 +96,16 @@ def _gemini_result(message: str, history: list[dict[str, str]] | None = None) ->
                 temperature=0.7,
             ),
         )
+
+        if not response.text:
+            logger.error("Gemini returned an empty response (model=%s)", model)
+            return None
+
         return json.loads(response.text)
-    except Exception:
+    except Exception as exc:
+        # Keep the user-facing response simple, but log the real reason so
+        # deployment problems can be diagnosed instead of silently falling back.
+        logger.exception("Gemini request failed: %s", exc)
         return None
 
 
@@ -124,7 +137,8 @@ def _openai_result(message: str, history: list[dict[str, str]] | None = None) ->
             },
         )
         return json.loads(response.output_text)
-    except Exception:
+    except Exception as exc:
+        logger.exception("OpenAI request failed: %s", exc)
         return None
 
 
