@@ -326,6 +326,7 @@ const conversation=document.getElementById("conversation");
 const liveTranscript=document.getElementById("liveTranscript");
 let recognition=null, active=false, speaking=false, processing=false, muted=false;
 let recorder=null, mediaStream=null, silenceTimer=null, recordStartedAt=0;
+let currentPlayer=null, bargeInTimer=null;
 let callStartedAt=0, callTimerInterval=null;
 let localTranscriber=null, localTranscriberPromise=null;
 let sessionId=localStorage.getItem("janu_session_id");
@@ -415,14 +416,25 @@ async function speak(text){
     const url=URL.createObjectURL(blob);
     const player=new Audio(url);
     player.volume=1;
+    currentPlayer=player;
     try{
       await player.play();
+      // Keep the microphone open during Jaanu speech so the user can interrupt.
+      if(recognition && active && !muted){
+        clearTimeout(bargeInTimer);
+        bargeInTimer=setTimeout(()=>startListening(true),450);
+      }
       await new Promise(resolve=>{
         const timer=setTimeout(resolve,15000);
-        player.onended=()=>{clearTimeout(timer);resolve()};
-        player.onerror=()=>{clearTimeout(timer);resolve()};
+        const done=()=>{clearTimeout(timer);resolve()};
+        player.onended=done;
+        player.onerror=done;
+        player.onpause=done;
       });
     }finally{
+      if(currentPlayer===player)currentPlayer=null;
+      clearTimeout(bargeInTimer);
+      bargeInTimer=null;
       URL.revokeObjectURL(url);
     }
   }catch(err){
@@ -510,16 +522,27 @@ async function startConversation(){
       }
       transcript=transcript.trim();
       if(transcript)setLiveTranscript(transcript);
-      if(finalResult && transcript)await handleUserText(transcript);
+      if(finalResult && transcript){
+        try{recognition.stop()}catch(err){}
+        if(speaking)interruptJaanuSpeech();
+        await handleUserText(transcript);
+      }
     };
+    recognition.onaudiostart=()=>{ if(active && !speaking)setCallStatus("Listening..."); };
+    recognition.onsoundstart=()=>{ if(active && !speaking)setCallStatus("Hearing you..."); };
+    recognition.onspeechstart=()=>{ if(active)setCallStatus("Hearing you..."); };
+    recognition.onspeechend=()=>{ if(active && !speaking)setCallStatus("Processing..."); };
+    recognition.onaudioend=()=>{ if(active && !processing && !speaking)setCallStatus("Listening..."); };
     recognition.onerror=e=>{
       if(!active)return;
       if(e.error==="not-allowed"||e.error==="service-not-allowed"){
         setCallStatus("Microphone permission is needed. Please allow it in your browser.");
+        setLiveTranscript("<strong>System:</strong> Microphone permission was denied.");
         return;
       }
-      if(e.error==="no-speech"||e.error==="aborted"){setCallStatus("Listening...");setTimeout(startListening,1000);}
-      else {setCallStatus("Listening...");setTimeout(startListening,1500);}
+      if(e.error==="no-speech"){setCallStatus(speaking?"Jaanu is speaking — you can interrupt":"Listening...");setTimeout(()=>startListening(speaking),700);}
+      else if(e.error==="aborted"){if(active)setTimeout(()=>startListening(speaking),500);}
+      else {setCallStatus("Microphone listening error: "+e.error);setTimeout(()=>startListening(speaking),1200);}
     };
     recognition.onend=()=>{
       if(active&&!speaking&&!processing)setTimeout(startListening,isIOS?3500:250);
@@ -528,6 +551,19 @@ async function startConversation(){
     // iOS Safari has a WebKit bug where audio playback can break the next
     // SpeechRecognition session. We therefore use the reliable iPhone
     // browser voice for speech, then wait before reopening recognition.
+    if(!isIOS){
+      try{
+        mediaStream=await navigator.mediaDevices.getUserMedia({
+          audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1}
+        });
+      }catch(e){
+        setCallStatus("Please allow microphone access to talk to Jaanu.");
+        setLiveTranscript("<strong>System:</strong> Microphone permission is required.");
+        stopConversation();
+        return;
+      }
+    }
+
     if(isIOS){
       await browserSpeak(greeting);
       if(!active)return;
@@ -595,9 +631,27 @@ async function handleUserText(text){
     }
   }
 }
-function startListening(){
-  if(!active||speaking||processing||!recognition||muted)return;
-  try{recognition.start()}catch(e){setTimeout(startListening,500)}
+function startListening(allowDuringSpeech=false){
+  if(!active||processing||!recognition||muted)return;
+  if(speaking&&!allowDuringSpeech)return;
+  try{
+    const track=mediaStream?.getAudioTracks?.()[0];
+    if(track && track.readyState==="live") recognition.start(track);
+    else recognition.start();
+  }catch(e){setTimeout(()=>startListening(allowDuringSpeech),500)}
+}
+function interruptJaanuSpeech(){
+  clearTimeout(bargeInTimer);
+  bargeInTimer=null;
+  speaking=false;
+  if(currentPlayer){
+    try{currentPlayer.pause()}catch(e){}
+    try{currentPlayer.currentTime=0}catch(e){}
+    currentPlayer=null;
+  }
+  try{speechSynthesis.cancel()}catch(e){}
+  callAvatar.classList.remove("speaking");
+  setCallStatus("Listening...");
 }
 async function getLocalTranscriber(){
   if(localTranscriber)return localTranscriber;
@@ -721,6 +775,8 @@ function stopSilenceDetection(){
 }
 function stopConversation(){
   active=false; speaking=false; muted=false;
+  clearTimeout(bargeInTimer); bargeInTimer=null;
+  if(currentPlayer){try{currentPlayer.pause()}catch(e){} currentPlayer=null;}
   try{recognition&&recognition.stop()}catch(e){}
   try{recorder&&recorder.stop()}catch(e){}
   stopSilenceDetection();
