@@ -595,18 +595,17 @@ async function startConversation(){
     }
 
     if(isIOS){
+      // IMPORTANT for iPhone Safari: start SpeechRecognition directly from the
+      // Start Conversation button gesture. Starting it only after an awaited
+      // greeting can lose the user-activation required by Safari.
+      setCallStatus("Listening...");
+      startListening();
       await browserSpeak(greeting);
       if(!active)return;
-      setCallStatus("Preparing microphone...");
-      try{
-        const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-        stream.getTracks().forEach(t=>t.stop());
-      }catch(e){
-        setCallStatus("Please allow microphone access.");
-        stopConversation();
-        return;
-      }
-      setTimeout(startListening,3500);
+      // The first recognition session may have ended while Jaanu was speaking.
+      // Re-open it after the greeting; on iOS this is now a continuation of
+      // the user-started recognition flow rather than the first start.
+      setTimeout(()=>startListening(),500);
     }else{
       const voiceWarmup=loadLocalTTS().catch(()=>null);
       await browserSpeak(greeting);
