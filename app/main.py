@@ -31,6 +31,7 @@ class PushSubscription(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+    tts_text: str | None = None
     task_created: bool = False
     task_id: int | None = None
     session_id: str
@@ -87,7 +88,7 @@ def janu_reply(message: str, session_id: str) -> ChatResponse:
             reply = ai_result.get("reply") or format_task_confirmation(task, task_id)
             add_message(session_id, "user", message)
             add_message(session_id, "assistant", reply)
-            return ChatResponse(reply=reply, task_created=True, task_id=task_id, session_id=session_id)
+            return ChatResponse(reply=reply, tts_text=ai_result.get("tts_text") or reply, task_created=True, task_id=task_id, session_id=session_id)
 
         if intent == "list_tasks":
             reply = format_tasks(list_tasks())
@@ -102,7 +103,7 @@ def janu_reply(message: str, session_id: str) -> ChatResponse:
 
         add_message(session_id, "user", message)
         add_message(session_id, "assistant", reply)
-        return ChatResponse(reply=reply, session_id=session_id)
+        return ChatResponse(reply=reply, tts_text=ai_result.get("tts_text") or reply, session_id=session_id)
 
     # Offline fallback when no API key is configured.
     task = parse_task(message)
@@ -135,6 +136,7 @@ def janu_reply(message: str, session_id: str) -> ChatResponse:
     add_message(session_id, "assistant", reply)
     return ChatResponse(
         reply=reply,
+        tts_text=reply,
         task_created=bool(task),
         task_id=task_id if task else None,
         session_id=session_id,
@@ -374,16 +376,47 @@ function chooseFemaleVoice(){
 }
 let localTTS=null, localTTSPromise=null;
 
-function browserSpeak(text){
+function browserSpeak(text,lang="en-IN"){
   return new Promise(resolve=>{
     if(!("speechSynthesis" in window)){resolve();return}
     speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(text);
-    u.lang="en-IN"; u.rate=.92; u.pitch=1.05;
+    u.lang=lang; u.rate=.92; u.pitch=1.05;
     const voice=chooseFemaleVoice(); if(voice) u.voice=voice;
     u.onend=()=>resolve(); u.onerror=()=>resolve();
     speechSynthesis.speak(u);
   });
+}
+
+async function serverSpeak(ttsText,fallbackText){
+  try{
+    const r=await fetch("/speak",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:ttsText})});
+    if(!r.ok)throw new Error("TTS server error");
+    const blob=await r.blob();
+    if(!blob.size)throw new Error("Empty TTS audio");
+    const url=URL.createObjectURL(blob);
+    const player=new Audio(url);
+    player.volume=1;
+    currentPlayer=player;
+    try{
+      await player.play();
+      if(recognition && active && !muted){
+        clearTimeout(bargeInTimer);
+        bargeInTimer=setTimeout(()=>startListening(true),450);
+      }
+      await new Promise(resolve=>{
+        const timer=setTimeout(resolve,15000);
+        const done=()=>{clearTimeout(timer);resolve()};
+        player.onended=done; player.onerror=done; player.onpause=done;
+      });
+    }finally{
+      if(currentPlayer===player)currentPlayer=null;
+      clearTimeout(bargeInTimer); bargeInTimer=null;
+      URL.revokeObjectURL(url);
+    }
+  }catch(err){
+    await browserSpeak(fallbackText);
+  }
 }
 
 async function loadLocalTTS(){
@@ -402,46 +435,10 @@ async function loadLocalTTS(){
   catch(err){localTTSPromise=null; throw err}
 }
 
-async function speak(text){
+async function speak(text,ttsText=text){
   speaking=true;
   try{
-    // Fully local, free neural TTS. No paid API and no remote TTS server.
-    const tts=await Promise.race([
-      loadLocalTTS(),
-      new Promise((_,reject)=>setTimeout(()=>reject(new Error("TTS model loading timeout")),15000))
-    ]);
-    const audio=await Promise.race([
-      tts.generate(text,{voice:"af_nicole",speed:0.95}),
-      new Promise((_,reject)=>setTimeout(()=>reject(new Error("TTS generation timeout")),10000))
-    ]);
-    const blob=audio.toBlob();
-    const url=URL.createObjectURL(blob);
-    const player=new Audio(url);
-    player.volume=1;
-    currentPlayer=player;
-    try{
-      await player.play();
-      // Keep the microphone open during Jaanu speech so the user can interrupt.
-      if(recognition && active && !muted){
-        clearTimeout(bargeInTimer);
-        bargeInTimer=setTimeout(()=>startListening(true),450);
-      }
-      await new Promise(resolve=>{
-        const timer=setTimeout(resolve,15000);
-        const done=()=>{clearTimeout(timer);resolve()};
-        player.onended=done;
-        player.onerror=done;
-        player.onpause=done;
-      });
-    }finally{
-      if(currentPlayer===player)currentPlayer=null;
-      clearTimeout(bargeInTimer);
-      bargeInTimer=null;
-      URL.revokeObjectURL(url);
-    }
-  }catch(err){
-    // Guaranteed fallback so conversation never gets stuck.
-    await browserSpeak(text);
+    await serverSpeak(ttsText,text);
   }finally{
     speaking=false;
   }
@@ -526,7 +523,8 @@ async function startConversation(){
   startCallTimer();
   setCallStatus("Calling...");
   setCallCaption("Hi Lakshman, I'm Jaanu. How can I help you?");
-  const greeting="Hi Lakshmanan, I am Jaanu. How can I help you?";
+  const greeting="Hi Lakshman! Jaanu inga irukken. Enna help venum?";
+  const greetingTts="ஹாய் லக்ஷ்மன்! ஜானு இங்க இருக்கேன். என்ன ஹெல்ப் வேணும்?";
   addMessage("Jaanu",greeting,"assistant");
 
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -600,7 +598,7 @@ async function startConversation(){
       // greeting can lose the user-activation required by Safari.
       setCallStatus("Listening...");
       startListening();
-      await browserSpeak(greeting);
+      await serverSpeak(greetingTts,greeting);
       if(!active)return;
       // The first recognition session may have ended while Jaanu was speaking.
       // Re-open it after the greeting; on iOS this is now a continuation of
@@ -636,11 +634,11 @@ async function handleUserText(text){
     setCallStatus("Jaanu is speaking...");
     setCallCaption(result.reply); callAvatar.classList.add("speaking");
     if(/iPhone|iPad|iPod/i.test(navigator.userAgent)){
-      await browserSpeak(result.reply);
+      await serverSpeak(result.tts_text || result.reply,result.reply);
       callAvatar.classList.remove("speaking");
       if(active)setTimeout(startListening,3500);
     }else{
-      await speak(result.reply);
+      await speak(result.reply,result.tts_text || result.reply);
       callAvatar.classList.remove("speaking");
       if(active){
         if(recognition)setTimeout(startListening,250);
@@ -891,15 +889,18 @@ async def speak(request: SpeakRequest):
     if not text:
         return Response(content=b"", media_type="audio/mpeg")
     try:
-        backend = os.getenv("JANU_TTS_BACKEND", "indic_parler").lower()
+        backend = os.getenv("JANU_TTS_BACKEND", "edge_tts").lower()
         if backend == "indic_parler":
             audio = await asyncio.to_thread(_indic_parler_speak, text)
             return Response(content=audio, media_type="audio/mpeg")
 
         import edge_tts
+        # Tamil-script TTS gives Tanglish replies a natural Tamil pronunciation.
+        has_tamil = any("\u0b80" <= ch <= "\u0bff" for ch in text)
+        default_voice = "ta-IN-PallaviNeural" if has_tamil else "en-IN-AartiNeural"
         communicate = edge_tts.Communicate(
             text,
-            voice=os.getenv("JANU_TTS_VOICE", "en-IN-AartiNeural"),
+            voice=os.getenv("JANU_TTS_VOICE", default_voice),
             rate=os.getenv("JANU_TTS_RATE", "-5%"),
             pitch=os.getenv("JANU_TTS_PITCH", "+2Hz"),
         )
