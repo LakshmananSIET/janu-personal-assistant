@@ -523,8 +523,8 @@ async function startConversation(){
   startCallTimer();
   setCallStatus("Calling...");
   setCallCaption("Hi Lakshman, I'm Jaanu. How can I help you?");
-  const greeting="Hi Lakshman! Jaanu inga irukken. Enna help venum?";
-  const greetingTts="ஹாய் லக்ஷ்மன்! ஜானு இங்க இருக்கேன். என்ன ஹெல்ப் வேணும்?";
+  const greeting="Hi Lakshman sir! Enna help venum?";
+  const greetingTts="ஹாய் லக்ஷ்மன் சார்! என்ன ஹெல்ப் வேணும்?";
   addMessage("Jaanu",greeting,"assistant");
 
   const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
