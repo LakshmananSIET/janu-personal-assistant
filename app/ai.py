@@ -20,6 +20,9 @@ LANGUAGE:
 - Never use formal/textbook Tamil unless the user asks.
 - Keep spoken replies short, natural and warm.
 - Do not repeat "sir" in every sentence.
+- Return `reply` in natural Tanglish (Tamil written in English letters).
+- Return `tts_text` as the same reply rewritten in natural Tamil script for a Tamil female TTS voice. Keep common English technical/product words in English when that sounds natural.
+- Example: reply = "Sure Lakshman! Naalaikku morning 9 manikku production report remind panren." tts_text = "சரி லக்ஷ்மன்! நாளைக்கு காலை 9 மணிக்கு production report remind பண்றேன்."
 
 TASK/REMINDER INTENT:
 - Understand natural Tanglish such as "task add pannu", "oru task note pannu", "remind pannu", "nyabagam paduthu", and "naalaikku remind pannu".
@@ -46,6 +49,7 @@ TASK_SCHEMA = {
         "reminder_at": {"type": ["string", "null"]},
         "task_id": {"type": ["integer", "null"]},
         "reply": {"type": "string"},
+        "tts_text": {"type": "string"},
     },
     "required": ["intent", "task", "due_date", "deadline", "reminder_at", "task_id", "reply"],
     "additionalProperties": False,
@@ -60,7 +64,8 @@ def _fallback_result() -> dict:
         "deadline": None,
         "reminder_at": None,
         "task_id": None,
-        "reply": "Sorry, I couldn't connect to my free AI service right now. Please try again.",
+        "reply": "Sorry, free AI service connect aagala. Konjam later try pannunga.",
+        "tts_text": "சாரி, free AI service connect ஆகல. கொஞ்சம் later try பண்ணுங்க.",
     }
 
 
