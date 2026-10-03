@@ -12,20 +12,27 @@ logger = logging.getLogger("jaanu.ai")
 
 SYSTEM_PROMPT = """
 You are Jaanu, a friendly female personal AI assistant for Lakshman.
-Speak naturally and simply. Use conversation history.
-If the user adds information to a previous task, connect it to that task.
-IMPORTANT TASK RULE:
-- Treat normal conversation as chat.
-- Create a task only when the user explicitly uses the word "task" (for example, "add task: buy milk").
-- Create a reminder only when the user explicitly says "remind me" or "reminder".
-- A reminder is a notification request; a task is only a saved task and must not create a notification unless the user also explicitly asks to be reminded.
-- If the user asks a normal question or has normal conversation, use intent "chat" and answer naturally.
-- Do NOT turn ordinary sentences containing "need", "finish", "complete", "do", "should", or "have to" into tasks.
-- Do NOT create a reminder/task when the user is rejecting a reminder, such as "no, don't remind me".
-Use ISO 8601 with Asia/Kolkata offset for reminder_at when a time is known.
-The current local time is supplied below; use it to resolve today/tomorrow.
-For task dates use YYYY-MM-DD. For deadlines use HH:MM.
-Do not invent missing dates or times.
+
+LANGUAGE:
+- Speak naturally in Tanglish: conversational Tamil written in English letters, mixed with English where natural.
+- Understand Tamil, Tanglish and English.
+- Reply in the same language/style as the user.
+- Never use formal/textbook Tamil unless the user asks.
+- Keep spoken replies short, natural and warm.
+- Do not repeat "sir" in every sentence.
+
+TASK/REMINDER INTENT:
+- Understand natural Tanglish such as "task add pannu", "oru task note pannu", "remind pannu", "nyabagam paduthu", and "naalaikku remind pannu".
+- Create a task when the user clearly asks to add/note a task.
+- Create a reminder when the user clearly asks to be reminded/nyabagam padutha.
+- Normal conversation remains "chat".
+- Do not create a task or reminder from a normal statement unless the user clearly asks for one.
+- Do not create a reminder when the user rejects it, such as "vendam, remind panna vendam".
+- If important information is missing, ask one short clarification.
+- Use ISO 8601 with Asia/Kolkata offset for reminder_at when a time is known.
+- For task dates use YYYY-MM-DD. For deadlines use HH:MM.
+- Do not invent missing dates or times.
+
 Return only the requested JSON.
 """
 
@@ -84,7 +91,7 @@ def _gemini_result(message: str, history: list[dict[str, str]] | None = None) ->
             )
         )
 
-        model = os.getenv("JANU_AI_MODEL", "gemini-3.8-flash")
+        model = os.getenv("JANU_AI_MODEL", "gemini-3.7-flash")
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model=model,
@@ -103,14 +110,11 @@ def _gemini_result(message: str, history: list[dict[str, str]] | None = None) ->
 
         return json.loads(response.text)
     except Exception as exc:
-        # Keep the user-facing response simple, but log the real reason so
-        # deployment problems can be diagnosed instead of silently falling back.
         logger.exception("Gemini request failed: %s", exc)
         return None
 
 
 def _openai_result(message: str, history: list[dict[str, str]] | None = None) -> dict | None:
-    # Optional paid OpenAI fallback. Disabled unless JANU_USE_OPENAI=true.
     if os.getenv("JANU_USE_OPENAI", "false").lower() not in {"1", "true", "yes", "on"}:
         return None
 
@@ -143,8 +147,6 @@ def _openai_result(message: str, history: list[dict[str, str]] | None = None) ->
 
 
 def get_ai_result(message: str, history: list[dict[str, str]] | None = None) -> dict | None:
-    # Gemini is the default free AI path. OpenAI is optional and never called
-    # unless JANU_USE_OPENAI is explicitly enabled.
     result = _gemini_result(message, history)
     if result is not None:
         return result
