@@ -532,7 +532,7 @@ async function startConversation(){
 
   if(Recognition){
     recognition=new Recognition();
-    recognition.lang="en-IN";
+    recognition.lang="ta-IN";
     recognition.interimResults=true;
     recognition.continuous=false;
     recognition.onstart=()=>{
@@ -691,7 +691,7 @@ async function getLocalTranscriber(){
     mod.env.useBrowserCache=true;
     localTranscriber=await mod.pipeline(
       "automatic-speech-recognition",
-      "Xenova/whisper-tiny.en",
+      "Xenova/whisper-tiny",
       {device:"wasm"}
     );
     return localTranscriber;
