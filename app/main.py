@@ -663,7 +663,7 @@ function startListening(allowDuringSpeech=false){
   if(speaking&&!allowDuringSpeech)return;
   try{
     const track=mediaStream?.getAudioTracks?.()[0];
-    if(track && track.readyState==="live") recognition.start(track);
+    if(track && track.readyState==="live") recognition.start();
     else recognition.start();
   }catch(e){setTimeout(()=>startListening(allowDuringSpeech),500)}
 }
